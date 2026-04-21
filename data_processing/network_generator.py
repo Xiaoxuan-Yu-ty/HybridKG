@@ -7,7 +7,7 @@ import os
 from os.path import isfile, join
 import pickle
 import sys
-from typing import TextIO, Optional, Tuple, Union, Set, List
+from typing import Dict, TextIO, Optional, Tuple, Union, Set, List
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
 
@@ -193,10 +193,55 @@ class PatientNetworkGenerator:
         mapping = {}
         if graph is None: return mapping
         for node in graph.nodes:
-            symbol = self.gene_symbol_extractor(node, pattern)
+            if '(' not in node:
+                # to include added isolated protein nodes
+                symbol = node
+            else:
+                symbol = self.gene_symbol_extractor(node, pattern)
             if symbol:
                 mapping[symbol] = node
         return mapping
+    
+    def calculate_nas_scores(self, patient_graph) -> Dict[str, float]:
+        """
+        Calculates the similarity-weighted Neighborhood Homophily Score (NHS).
+        Only training neighbors contribute to the score.
+        """
+        nhs_scores = {}
+        
+        # Identify all patient nodes
+        all_patients = [n for n, d in patient_graph.nodes(data=True) if d.get('type') == 'Patient']
+        
+        for u in all_patients:
+            u_attrs = patient_graph.nodes[u]
+            # calculate NHS for all nodes, but it's primarily used for masked (val/test) nodes
+            
+            total_weight = 0.0
+            weighted_label_sum = 0.0
+            
+            # Look at neighbors in the similarity graph
+            for v in patient_graph.neighbors(u):
+                v_attrs = patient_graph.nodes[v]
+                
+                # Only neighbors that are in the TRAINING set can "vote"
+                if v_attrs.get('train_mask', False):
+                    # Get edge weight (similarity)
+                    edge_data = patient_graph.get_edge_data(u, v)
+                    # weight here is similarity score
+                    weight = edge_data[0].get('weight', 1.0)
+                    
+                    label = v_attrs.get('y', 0)
+                    
+                    weighted_label_sum += (weight * label)
+                    total_weight += weight
+            
+            # If a node has no training neighbors, default to 0.5 (neutral)
+            if total_weight > 0:
+                nhs_scores[u] = weighted_label_sum / total_weight
+            else:
+                nhs_scores[u] = 0.5
+                
+        return nhs_scores
 
     def generate_hybrid_network(
                                 self, 
@@ -206,7 +251,7 @@ class PatientNetworkGenerator:
                                 pattern_control:str,
                                 disease_label: int = 1,
                                 control_label: int = 0
-                            ) -> Tuple[nx.Graph, pd.DataFrame, pd.Series]:
+                            ) -> Tuple[nx.Graph, pd.DataFrame, pd.DataFrame, dict]:
         """
         Generates a combined network:
         1. Patient-Patient network via K-NN clustering based on Cosine Similarity.
@@ -230,6 +275,10 @@ class PatientNetworkGenerator:
                                                    labels_series=data['label'],
                                                    k=5,
                                                    base_graph_type=type(full_graph))
+        # Calculate NAS scores after building the similarity graph
+        print("Calculating Neighborhood Affinity Scores (NAS)...")
+        nas_dict = self.calculate_nas_scores(patient_graph)
+
         full_graph = nx.compose(full_graph, patient_graph)
         
         # 3. Add Patient-Protein Edges based on Label
@@ -286,7 +335,7 @@ class PatientNetworkGenerator:
                 # Optional: Handle non-training nodes if necessary
                 pass
 
-        return full_graph, summary_df, radicals
+        return full_graph, summary_df, radicals, nas_dict
     
     def get_candidate_node_names(self, summary_df, radicals, pattern_disease, pattern_control, split='train'):
         """
@@ -318,6 +367,7 @@ class PatientNetworkGenerator:
                     else: c_down[name].append(node_name)
 
         return val_sample_names, d_up, d_down, c_up, c_down
+    
     
 '''       
 class PatientNetworkGenerator:
