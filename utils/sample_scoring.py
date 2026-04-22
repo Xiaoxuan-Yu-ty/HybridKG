@@ -2,6 +2,7 @@
 
 """Carry out Radical search to identify extreme samples in the dataset and give them a single sample score."""
 
+import argparse
 import os
 from typing import Callable, Optional, List, Tuple, Any
 from scipy import stats
@@ -93,8 +94,8 @@ def do_radical_search(
                 if patient_position_in_distribution > upper_thresh:
                     output_df.loc[patient_index, feature] = 1
 
-    output_df.columns = data.index
-    output_df.index = data.columns
+    output_df.columns = data_transpose.columns
+    output_df.index = data_transpose.index
 
     summary_df = output_df.apply(pd.Series.value_counts)
 
@@ -354,7 +355,7 @@ def do_std(
     
     summary_df_1 = output_df.apply(pd.Series.value_counts)
     
-    return output_df, summary_df_1
+    return output_df, summary_df
 
 def process_and_save(
     data: pd.DataFrame, 
@@ -395,3 +396,46 @@ def process_and_save(
 
     print(f"Done! Files saved to {output_dir}")
     return output_df, summary_df
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--exp', type=str, default="../data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv")
+    parser.add_argument('--design', type=str, default="../data/GEO/GSE33000_ad_hd/GSE33000_meta_2cls.csv")
+    parser.add_argument('--output_dir', type=str, default="../data/GEO/GSE33000_ad_hd/sample_scoring")
+    parser.add_argument('--method', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
+    parser.add_argument('--control', default='Control', choices=['Control', 0], help="Control labels in design")
+
+    parser.add_argument('--control_based', action='store_true', help="Whether use control group as baseline to score extreme.")
+    
+    args = parser.parse_args()
+
+
+    df_exp = pd.read_csv(args.exp, index_col=0)
+    print(f"Expression df shape: {df_exp.shape}")
+    design = pd.read_csv(args.design, index_col=0)
+    print(f"design file shape: {design.shape}")
+
+    method_threshold_map = {
+        'ecdf':5,
+        'logfc':0.1,
+        'std':1.5
+    }
+    method_function_map = {
+        'ecdf':do_radical_search,
+        'logfc':do_biological_logfc,
+        'std':do_std
+    }
+    for method in ['ecdf', 'std', 'logfc']:
+        df, summary = process_and_save(
+            data=df_exp.transpose(), 
+            design=design, 
+            threshold=method_threshold_map[method], 
+            control=args.control,
+            do_function=method_function_map[method],
+            output_dir=args.output_dir,
+            method = method,
+            control_based=args.control_based
+        )
+
+if __name__=="__main__":
+    main()
