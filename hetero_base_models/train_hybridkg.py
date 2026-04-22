@@ -25,7 +25,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 from data_processing.patient_network_prep import convert_to_hetero_data
-from hetero_base_models.hetero_base_models import get_model
+from hetero_base_models import get_model
 
 def compute_link_loss(model, z_dict, edge_index_dict, num_nodes_dict, device, neg_ratio=1.0):
     total_loss = 0

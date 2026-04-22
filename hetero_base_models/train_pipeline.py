@@ -34,18 +34,18 @@ from utilities import (assign_kg_by_NodeCls,
 
 from data_processing.network_generator import PatientNetworkGenerator
 from utils.graph_utils import load_graph, save_graph
-from hetero_base_models.hetero_base_models import get_model
+from hetero_base_models import get_model
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Hybrid Hetero-KG Pipeline")
     
     # Data Paths
-    parser.add_argument('--exp_path', type=str, default="../AD/data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv", 
+    parser.add_argument('--exp_path', type=str, default="../data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv", 
                         help="Path to expression CSV")
-    parser.add_argument('--scoring_path', type=str, default="../AD/data/GEO/GSE33000_ad_hd/map_ad_kg/sample_scoring_ecdf.csv", 
+    parser.add_argument('--scoring_path', type=str, default="../data/GEO/GSE33000_ad_hd/map_ad_kg/sample_scoring_ecdf.csv", 
                         help="Path to sample scoring CSV")
-    parser.add_argument('--kg_disease_path', type=str, default="../AD/data/KG/ad_kg_reversed_noncausal_removed.pkl")
-    parser.add_argument('--kg_health_path', type=str, default="../AD/data/KG/healthy_aging_reversed_remove_noncausal.pkl")
+    parser.add_argument('--kg_disease_path', type=str, default="../data/KG/ad_kg_reversed_noncausal_removed.pkl")
+    parser.add_argument('--kg_health_path', type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/{assign_method}/
     parser.add_argument('--output_dir', type=str, default="../results/HybridPipeline/")
