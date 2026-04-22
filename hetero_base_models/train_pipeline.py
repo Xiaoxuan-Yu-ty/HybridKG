@@ -34,7 +34,7 @@ from utilities import (assign_kg_by_NodeCls,
 
 from data_processing.network_generator import PatientNetworkGenerator
 from utils.graph_utils import load_graph, save_graph
-from hetero_base_models import get_model
+from hetero_base_models.base_models import get_model
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Hybrid Hetero-KG Pipeline")
