@@ -434,6 +434,7 @@ def update_heterodata(data, assignments, isolated_protein_ids):
     """
     isolated_set = set(isolated_protein_ids)
     edge_logs = []
+    assignment_logs = []
     
     for sample_id, relations in assignments.items():
         for relation_type, content in relations.items():
@@ -445,6 +446,17 @@ def update_heterodata(data, assignments, isolated_protein_ids):
             valid_indices = []
             for i, prot_id in enumerate(assigned_ids):
                 p_id = prot_id.item()
+
+                # Get original assignment logs
+                assignment_logs.append({
+                    'sample_id': int(sample_id),
+                    'protein_id': int(p_id),
+                    'relation': relation_type,
+                    'score': raw_scores[i][0],
+                    'source_kg': raw_scores[i][1],
+                    'label': data['Patient'].y[sample_id].item()
+                })
+                
                 if p_id not in isolated_set:
                     valid_indices.append(i)
                     # save edge_log infos
@@ -501,15 +513,17 @@ def calculate_source_ratio(df):
         
         
         # Calculate ratio (c / d)
-        ratio = num_c / num_d if num_d > 0 else float('inf')
+        ratio = num_d / num_c if num_c > 0 else float('inf')
         
         results.append({
             'sample_id': sample_id,
             'c_count': num_c,
             'd_count': num_d,
-            'c_d_ratio': ratio,
-            'nhs_score':group['nhs_score'].mean(),
+            'd_c_ratio': ratio,
+            # 'nhs_score':group['nhs_score'].mean(),
             'label': group['label'].iloc[0] # To verify alignment with original label
         })
     
     return pd.DataFrame(results)
+
+
