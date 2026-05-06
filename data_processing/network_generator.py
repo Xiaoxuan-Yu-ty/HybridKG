@@ -202,6 +202,59 @@ class PatientNetworkGenerator:
                 mapping[symbol] = node
         return mapping
     
+    def generate(self, 
+                 data: pd.DataFrame, 
+                 exp_df: pd.DataFrame, 
+                 pattern: str,
+                 base_graph:str='disease') -> Tuple[nx.MultiDiGraph, pd.DataFrame]:
+        """
+        Connects samples to KG protein nodes using self.base_graph.
+        """
+        patient_labels = data['label'].to_dict()
+        scores = data.drop(columns=['label'])
+        
+        # 1. Force base_graph to MultiDiGraph and copy
+        if base_graph == 'disease':
+            self.base_graph = self.kg_disease
+        else:
+            self.base_graph = self.kg_healthy
+        
+        self.relation_map = {1: f'up_reg_{base_graph}', -1: f'down_reg_{base_graph}'}
+
+        overlay_graph = nx.MultiDiGraph(self.base_graph).copy()
+        
+        symbol_to_kg_node = self.get_symbol_mapping(overlay_graph, pattern)
+        common_proteins = [s for s in scores.columns if s in symbol_to_kg_node]
+        
+        sparse_data = scores[common_proteins].stack()
+        radicals = sparse_data[sparse_data != 0]
+
+        summary_df = pd.DataFrame(0, index=data.index, columns=['pos_edges', 'neg_edges'])
+
+        # add patient nodes to overlay graph
+        overlay_graph = add_patient_attrs(G=overlay_graph,
+                                          features_df=exp_df,
+                                          labels_series=data['label'],
+                                          )
+        # add edges between patient and protein
+        for (patient, symbol), val in tqdm(radicals.items(), total=len(radicals), desc="Linking Samples"):
+            protein_node = symbol_to_kg_node[symbol]
+            rel = self.relation_map.get(int(val))
+            
+            if not overlay_graph.has_node(patient):
+                overlay_graph.add_node(patient, label=patient_labels[patient], type='Patient')
+
+            weight_value = float(exp_df.loc[patient, symbol])
+            
+            # Use relation as the 'key' for MultiDiGraph edges
+            overlay_graph.add_edge(patient, protein_node, relation=rel, weight=weight_value)
+            overlay_graph.add_edge(protein_node, patient, relation=f'rev_{rel}', weight=weight_value)
+            
+            col = 'pos_edges' if int(val) == 1 else 'neg_edges'
+            summary_df.at[patient, col] += 1
+
+        return overlay_graph, summary_df
+    
     def calculate_nas_scores(self, patient_graph) -> Dict[str, float]:
         """
         Calculates the similarity-weighted Neighborhood Homophily Score (NHS).
@@ -368,80 +421,106 @@ class PatientNetworkGenerator:
 
         return val_sample_names, d_up, d_down, c_up, c_down
     
-    
-'''       
-class PatientNetworkGenerator:
-    def __init__(self, kg_disease, kg_healthy):
+    def generate_dual_hybrid_network(
+                                self, 
+                                data: pd.DataFrame, 
+                                exp_df: pd.DataFrame, 
+                                pattern_disease: str,
+                                pattern_control: str
+                            ) -> Tuple[nx.Graph, pd.DataFrame, pd.DataFrame, dict]:
         """
-        Initializes with knowledge graphs. All input graphs are forced to MultiDiGraph.
+        Generates a dual-mapped hybrid network:
+        1. Patient-Patient network via K-NN clustering based on Cosine Similarity (all patients included).
+        2. EVERY Patient -> KG_Disease (if gene symbol exists in Disease KG).
+           Edges: sample --up_reg_disease / down_reg_disease--> disease_proteins
+        3. EVERY Patient -> KG_Healthy (if gene symbol exists in Healthy/Control KG).
+           Edges: sample --up_reg_healthy / down_reg_healthy--> healthy_proteins
         """
-        # Ensure all base KGs are MultiDiGraph to support multiple relations
-        self.kg_disease = nx.MultiDiGraph(kg_disease)
-        self.kg_healthy = nx.MultiDiGraph(kg_healthy)
-        
-        self.relation_map = {1: 'up_reg', -1: 'down_reg'}
-
-    def get_symbol_mapping(self, graph: nx.Graph, pattern: str):
-        """Helper function to create {gene_symbol: kg_node} mapping"""
-        mapping = {}
-        if graph is None: return mapping
-        for node in graph.nodes:
-            symbol = gene_symbol_extractor(node, pattern)
-            if symbol:
-                mapping[symbol] = node
-        return mapping
-    
-    def generate(self, 
-                 data: pd.DataFrame, 
-                 exp_df: pd.DataFrame, 
-                 pattern: str,
-                 base_graph:str='disease') -> Tuple[nx.MultiDiGraph, pd.DataFrame]:
-        """
-        Connects samples to KG protein nodes using self.base_graph.
-        """
-        patient_labels = data['label'].to_dict()
+        # 1. Setup and Mappings
         scores = data.drop(columns=['label'])
         
-        # 1. Force base_graph to MultiDiGraph and copy
-        if base_graph == 'disease':
-            self.base_graph = self.kg_disease
-        else:
-            self.base_graph = self.kg_healthy
+        map_disease = self.get_symbol_mapping(self.kg_disease, pattern_disease)
+        map_control = self.get_symbol_mapping(self.kg_healthy, pattern_control)
 
-        overlay_graph = nx.MultiDiGraph(self.base_graph).copy()
+        # Initialize the big network with both KGs combined
+        full_graph = nx.compose(self.kg_disease, self.kg_healthy)
         
-        symbol_to_kg_node = self.get_symbol_mapping(overlay_graph, pattern)
-        common_proteins = [s for s in scores.columns if s in symbol_to_kg_node]
+        # 2. Add Patient-Patient Similarity Edges (Cosine)
+        print("Constructing Patient-Patient Network...")
+        patient_graph = build_knn_graph_with_masks(features_df=exp_df,
+                                                   labels_series=data['label'],
+                                                   k=8,
+                                                   base_graph_type=type(full_graph))
         
-        sparse_data = scores[common_proteins].stack()
-        radicals = sparse_data[sparse_data != 0]
+        # Calculate NAS scores from similarity graph
+        print("Calculating Neighborhood Affinity Scores (NAS)...")
+        nas_dict = self.calculate_nas_scores(patient_graph)
 
-        summary_df = pd.DataFrame(0, index=data.index, columns=['pos_edges', 'neg_edges'])
+        full_graph = nx.compose(full_graph, patient_graph)
+        
+        # 3. Setup Summary DataFrame with granular tracking columns
+        summary_df = pd.DataFrame(0, index=data.index, columns=[
+            'pos_edges_disease', 'neg_edges_disease', 
+            'pos_edges_healthy', 'neg_edges_healthy'
+        ])
 
-        # add patient nodes to overlay graph
-        overlay_graph = add_patient_attrs(G=overlay_graph,
-                                          features_df=exp_df,
-                                          labels_series=data['label'],
-                                          )
-        # add edges between patient and protein
-        for (patient, symbol), val in tqdm(radicals.items(), total=len(radicals), desc="Linking Samples"):
-            protein_node = symbol_to_kg_node[symbol]
-            rel = self.relation_map.get(int(val))
+        summary_df['train'] = False
+        summary_df['val'] = False
+        summary_df['test'] = False
+        summary_df['linked_disease_nodes'] = [[] for _ in range(len(summary_df))]
+        summary_df['linked_healthy_nodes'] = [[] for _ in range(len(summary_df))]
+        summary_df['label'] = data['label'].to_list()
+        
+        # Pre-fill structural splits from the KNN patient graph
+        for patient in summary_df.index:
+            node_attrs = patient_graph.nodes[patient]
+            summary_df.at[patient, 'train'] = node_attrs.get('train_mask', False)
+            summary_df.at[patient, 'val'] = node_attrs.get('val_mask', False)
+            summary_df.at[patient, 'test'] = node_attrs.get('test_mask', False)
+        
+        # Identify non-zero expression values (radicals) 
+        all_common = set(map_disease.keys()) | set(map_control.keys())
+        common_cols = [c for c in scores.columns if c in all_common and c in exp_df.columns]
+        radicals = scores[common_cols].stack()
+        radicals = radicals[radicals != 0]
+        
+        # Custom dynamic edge prefixes
+        rel_map_disease = {1: 'up_reg_disease', -1: 'down_reg_disease'}
+        rel_map_healthy = {1: 'up_reg_healthy', -1: 'down_reg_healthy'}
+        
+        # 4. Map ALL patients to both KGs
+        for (patient, symbol), val in tqdm(radicals.items(), total=len(radicals), desc="Dual Linking All Samples to KGs"):
+            weight = float(exp_df.loc[patient, symbol])
+            direction = int(val)
             
-            if not overlay_graph.has_node(patient):
-                overlay_graph.add_node(patient, label=patient_labels[patient], type='Patient')
+            # --- Link to Disease KG if present ---
+            if symbol in map_disease:
+                target_node = map_disease[symbol]
+                rel = rel_map_disease.get(direction)
+                
+                full_graph.add_edge(patient, target_node, relation=rel, weight=weight)
+                full_graph.add_edge(target_node, patient, relation=f'rev_{rel}', weight=weight)
+                
+                # Update metrics
+                col = 'pos_edges_disease' if direction == 1 else 'neg_edges_disease'
+                summary_df.at[patient, col] += 1
+                summary_df.at[patient, 'linked_disease_nodes'].append(target_node)
+                
+            # --- Link to Healthy KG if present ---
+            if symbol in map_control:
+                target_node = map_control[symbol]
+                rel = rel_map_healthy.get(direction)
+                
+                full_graph.add_edge(patient, target_node, relation=rel, weight=weight)
+                full_graph.add_edge(target_node, patient, relation=f'rev_{rel}', weight=weight)
+                
+                # Update metrics
+                col = 'pos_edges_healthy' if direction == 1 else 'neg_edges_healthy'
+                summary_df.at[patient, col] += 1
+                summary_df.at[patient, 'linked_healthy_nodes'].append(target_node)
 
-            weight_value = float(exp_df.loc[patient, symbol])
-            
-            # Use relation as the 'key' for MultiDiGraph edges
-            overlay_graph.add_edge(patient, protein_node, relation=rel, weight=weight_value)
-            overlay_graph.add_edge(protein_node, patient, relation=f'rev_{rel}', weight=weight_value)
-            
-            col = 'pos_edges' if int(val) == 1 else 'neg_edges'
-            summary_df.at[patient, col] += 1
-
-        return overlay_graph, summary_df
-'''     
+        return full_graph, summary_df, radicals, nas_dict
+    
     
 def merge_2kg(G, H, output_dir=None, dataset=None, scoring_method=None):
     combined = nx.compose(G, H)
@@ -491,12 +570,19 @@ def generat_and_save_hybrid(exp_path:str,
     png = PatientNetworkGenerator(kg_disease=kg_disease,
                                   kg_healthy=kg_control)
     if process_method == 'hybrid':
-        network, summary, radicals = png.generate_hybrid_network(data=data,
+        network, summary, radicals, nas_dict = png.generate_hybrid_network(data=data,
                                         exp_df=exp_norm,
                                         pattern_disease=pattern_disease,
                                         pattern_control=pattern_control,
                                         disease_label=1,
                                         control_label=0
+                                        )
+    elif process_method == 'dual_hybrid':
+        network, summary, radicals, nas_dict = png.generate_dual_hybrid_network(
+                                        data=data,
+                                        exp_df=exp_norm,
+                                        pattern_disease=pattern_disease,
+                                        pattern_control=pattern_control
                                         )
     elif process_method == 'ADKG':
         network, summary = png.generate(data=data,
@@ -544,7 +630,7 @@ def main():
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../AD/data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../datasets/TrainSample_KGs", 
+    parser.add_argument("--output_dir", type=str, default="../datasets/Patient_KGs", 
                         help="Directory to save generated networks.")
 
     # Arguments need to change
@@ -553,12 +639,12 @@ def main():
     parser.add_argument("--dataset", type=str, default="geo", choices=['adni','geo'], 
                         help="Name of the dataset (for naming files).")
 
-    parser.add_argument("--scoring_path", type=str, default="../AD/data/GEO/GSE33000_ad_hd/map_ad_kg/sample_scoring_std.csv", 
+    parser.add_argument("--scoring_path", type=str, default="../AD/data/GEO/GSE33000_ad_hd/sample_scoring/sample_scoring_ecdf.csv", 
                         help="Path to sample scoring CSV (must contain 'label' column).")
-    parser.add_argument("--scoring_type", type=str, default="std", choices=['ecdf','std','logfc'],
+    parser.add_argument("--scoring_type", type=str, default="ecdf", choices=['ecdf','std','logfc'],
                         help="The scoring method used (for naming files).")
     
-    parser.add_argument("--method", type=str, default="hybrid", choices=['hybrid', 'merge', 'ADKG', 'HealthyKG'], 
+    parser.add_argument("--method", type=str, default="dual_hybrid", choices=['hybrid', 'dual_hybrid','merge', 'ADKG', 'HealthyKG'], 
                         help="Network construction strategy.")
     
     args = parser.parse_args()
