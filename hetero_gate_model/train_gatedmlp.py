@@ -118,6 +118,7 @@ def evaluate_mlp(model, labels, h_disease, h_healthy, mask):
     
     logits_masked = logits[mask]
     y_true = labels[mask].cpu().numpy()
+    y_masked_tensor = labels[mask]
 
     probs = F.softmax(logits_masked, dim=-1).cpu().numpy()
     preds = probs.argmax(axis=1)
@@ -126,7 +127,7 @@ def evaluate_mlp(model, labels, h_disease, h_healthy, mask):
     auprc = average_precision_score(y_true, probs[:, 1])
     
     gate_preds = (alphas[mask] > 0.5).float()
-    gate_correct = (gate_preds == y_true).float().mean().item()
+    gate_correct = (gate_preds == y_masked_tensor).float().mean().item()
 
     alpha_list = alphas.detach().cpu().view(-1).tolist()
     return {
@@ -273,7 +274,7 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default='geo', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     parser.add_argument('--model', type=str, default='gat', choices=['gat', 'hgt', 'sage'])
-    parser.add_argument("--method", type=str, default="composite", choices=['hybrid', 'dual_hybrid','merge', 'Composite'], 
+    parser.add_argument("--method", type=str, default="composite", choices=['hybrid', 'dual_hybrid','merge', 'composite'], 
                         help="Network construction strategy.")
     
     # GNN Encoder Model configuration
@@ -390,11 +391,13 @@ def main():
 
     # Save Patient-Level Alphas & Predictions to a structured CSV!
     diagnostics_df = pd.DataFrame({
-        "Patient_Index": [i for i, val in enumerate(data_disease["Patient"].test_mask)],
-        "Train": [val for i, val in enumerate(data_disease["Patient"].train_mask)],
-        "Validation": [val for i, val in enumerate(data_disease["Patient"].val_mask)],
-        "Test":[val for i, val in enumerate(data_disease["Patient"].test_mask)],
-        "True_Label": labels,
+        "Patient_Index": list(range(len(data_disease["Patient"].test_mask))),
+        "Train": data_disease["Patient"].train_mask.cpu().numpy(),
+        "Validation": data_disease["Patient"].val_mask.cpu().numpy(),
+        "Test": data_disease["Patient"].test_mask.cpu().numpy(),
+        
+        # 2. Detach and move your labels and alphas to CPU NumPy arrays
+        "True_Label": labels.detach().cpu().numpy(),
         "Alpha_Gate_Weight": test_alphas
     })
     

@@ -286,7 +286,7 @@ def parse():
     parser = argparse.ArgumentParser(description="Gated Heterogeneous GNN Training Pipeline with Hyperparameter Scheduling")
 
     # Paths
-    parser.add_argument("--graph_path", type=str, default="../datasets/MergedKGs/G_geo_merge_ecdf.pkl")
+    parser.add_argument("--graph_path", type=str, default="../datasets/Patient_KGs/G_geo_merge_ecdf.pkl")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
     parser.add_argument("--output_dir", type=str, default="../results/GatedHeteroMLP")
