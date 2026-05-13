@@ -110,7 +110,10 @@ def hierarchical_attention_loss(
     Returns:
         Average attention supervision loss across all layers.
     """
-    y = y[mask]
+    device = attentions[0]['Patient']['attention'].device if 'attention' in attentions[0]['Patient'] else attentions[0]['Patient'].device
+    
+    y = y.to(device)[mask] # Move y to the correct device before masking
+    
     total_att_loss = 0.0
     # supervise ALL layers
     for layer_att in attentions:
@@ -185,26 +188,25 @@ def train_epoch(model, data, optimizer, lambda_att=0.1):
     return float(loss), float(cls_loss), float(att_loss), attention_weights
 
 @torch.no_grad()
-def test(model, data, mask):
+def test(model, data, mask_name):
+    model.eval()
     model.eval()
     out, attention_weights = model(data.x_dict, data.edge_index_dict)
-    pred = out['Patient'].argmax(dim=-1)
-    probs = torch.softmax(out['Patient'], dim=-1,)[:,1]
+    
+    # Identify the mask tensor
+    mask = data['Patient'][mask_name] 
+    
+    # Extract logits and labels for the masked nodes
+    y_true = data['Patient'].y[mask].cpu().numpy()
+    logits = out['Patient'][mask]
+    pred = logits.argmax(dim=-1).cpu().numpy()
+    prob = torch.softmax(logits, dim=-1)[:, 1].cpu().numpy()
 
-    # move to cpu
-    y_true = data['Patient'].y.cpu().numpy()
-    pred = pred.detach().cpu().numpy()
-    prob = probs.detach().cpu().numpy()
-
-    #metrics
-    mask = data['Patient'][mask]
-    acc = (pred[mask] == y_true[mask]).sum() / mask.sum()
-    # f1
-    f1 = f1_score(y_true[mask], pred[mask],)
-
-    auroc = roc_auc_score(y_true[mask],prob[mask],)
-
-    auprc = average_precision_score(y_true[mask],prob[mask],)
+    # Metrics (Scikit-learn requires numpy on CPU)
+    acc = accuracy_score(y_true, pred)
+    f1 = f1_score(y_true, pred)
+    auroc = roc_auc_score(y_true, prob)
+    auprc = average_precision_score(y_true, prob)
   
     metrics = {
     'Accuracy': float(acc), 
@@ -236,11 +238,11 @@ def train(model, data, optimizer, epochs, args):
         
         train_metrics, train_att = test(model=model, 
                                     data=data,
-                                    mask='train_mask')
+                                    mask_name='train_mask')
         
         val_metrics, val_att = test(model=model, 
                                     data=data,
-                                    mask='val_mask')
+                                    mask_name='val_mask')
         epoch_record['total_loss'] = total_loss
         epoch_record['cls_loss'] = cls_loss
         epoch_record['att_loss'] = att_loss
@@ -305,6 +307,7 @@ def parse():
     parser.add_argument("--att_channels", type=int, default=32)
     parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--negative_slop", type=float, default=0.2)
 
     # General Optimizer Settings
     parser.add_argument("--epochs", type=int, default=100)
@@ -356,10 +359,11 @@ def main():
         G = pickle.load(f)
     data, node_mappings = convert_to_hetero_data(G)
     new_data = merge_patient_protein_edges(data)
+    new_data = new_data.to(device)
 
     # Build features
     new_data.x_dict = build_x_dict(new_data)
-    new_data.edge_index_dict = {et:new_data[et].edge_index for et in new_data.edge_types}
+    new_data.edge_index_dict = {et:new_data[et].edge_index.to(device) for et in new_data.edge_types}
 
     # Labels
     y = new_data["Patient"].y
@@ -374,6 +378,7 @@ def main():
                     att_channels=args.att_channels,
                     num_layers=args.num_layers, 
                     dropout=args.dropout,
+                    negative_slop=args.negative_slop,
                     num_classes=2,
                     device=device)
 
@@ -401,7 +406,7 @@ def main():
     test_metrics, test_att = test(
         model=encoder,
         data=new_data,
-        mask='test_mask'
+        mask_name='test_mask'
     )
 
     # 6. Results Persistence Layer

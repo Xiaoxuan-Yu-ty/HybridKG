@@ -27,12 +27,13 @@ class RelationAttentionAggregation(nn.Module):
         (paper, cites, paper)
     """
 
-    def __init__(self, target_type, relations, in_dim, out_dim, att_dim=32, dropout=0.5,):
+    def __init__(self, target_type, relations, in_dim, out_dim, att_dim=32, dropout=0.5,negative_slop=0.2):
         super().__init__()
 
         self.target_type = target_type
         self.relations = relations
         self.dropout = dropout
+        self.negative_slop = negative_slop
 
         # Relation-specific transformations
         self.rel_lins = nn.ModuleDict()
@@ -138,7 +139,7 @@ class RelationAttentionAggregation(nn.Module):
         # compute attention score -> [N, R]
         e = F.leaky_relu(
                     self.att_lin(att_input),
-                    negative_slope=0.2,
+                    negative_slope=self.negative_slop,
                     ).squeeze(-1)
         # softmax normalization across relations
         alpha = F.softmax(e, dim=1)
@@ -158,7 +159,7 @@ class HRGCNLayer(nn.Module):
     One heterogeneous graph layer.
     """
 
-    def __init__(self, metadata, in_dim, out_dim, att_dim=32, dropout=0.5,):
+    def __init__(self, metadata, in_dim, out_dim, att_dim=32, dropout=0.5,negative_slop=0.2,):
         super().__init__()
         """
         metadata:Tuple([List],[List]): tuple of 2 lists of node types and edge types
@@ -187,6 +188,7 @@ class HRGCNLayer(nn.Module):
                     out_dim=out_dim,
                     att_dim=att_dim,
                     dropout=dropout,
+                    negative_slop=negative_slop,
                 )
             )
 
@@ -235,6 +237,7 @@ class HRGCN(nn.Module):
         att_channels=32,
         dropout=0.5,
         num_layers=2,
+        negative_slop=0.2,
     ):
         super().__init__()
 
@@ -242,6 +245,7 @@ class HRGCN(nn.Module):
         self.out_channels = out_channels
         self.num_layers = num_layers
         self.dropout = dropout
+        self.negative_slop = negative_slop
 
         metadata = (data.node_types, data.edge_types)
         node_types = data.node_types
@@ -269,6 +273,7 @@ class HRGCN(nn.Module):
                     out_dim=hidden_channels,
                     att_dim=att_channels,
                     dropout=dropout,
+                    negative_slop=self.negative_slop
                 )
             )
         # Output projection

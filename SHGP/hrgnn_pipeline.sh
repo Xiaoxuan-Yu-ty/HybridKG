@@ -7,7 +7,7 @@ GRAPH_DIR="../datasets/Patient_KGs"
 BASE_OUT_DIR="../results/HRGNN"
 
 # Predefined grids
-DATASETS=("adni")
+DATASETS=("adni" "geo")
 SCORINGS=("ecdf") # "std" "logfc")
 MODELS=("gat" "gcn") # "hgt" "sage")
 METHODS=("dual_hybrid" "merge")

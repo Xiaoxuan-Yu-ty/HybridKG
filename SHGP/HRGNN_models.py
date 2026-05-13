@@ -37,6 +37,7 @@ class HRGCN(nn.Module):
         att_channels=32,
         dropout=0.5,
         num_layers=2,
+        negative_slop=0.2,
     ):
         super().__init__()
 
@@ -44,6 +45,7 @@ class HRGCN(nn.Module):
         self.out_channels = out_channels
         self.num_layers = num_layers
         self.dropout = dropout
+        self.negative_slop = negative_slop
 
         metadata = (data.node_types, data.edge_types)
         node_types = data.node_types
@@ -71,6 +73,7 @@ class HRGCN(nn.Module):
                     out_dim=hidden_channels,
                     att_dim=att_channels,
                     dropout=dropout,
+                    negative_slop=self.negative_slop
                 )
             )
         # Output projection
@@ -103,15 +106,6 @@ class HRGCN(nn.Module):
                                         )
 
         x_dict = new_x_dict
-
-        # x_dict = {
-        #     node_type: F.dropout(
-        #         F.elu(self.input_lins[node_type](x)),
-        #         p=self.dropout,
-        #         training=self.training,
-        #     )
-        #     for node_type, x in x_dict.items()
-        # }
 
         attn_weights = []
 
@@ -166,6 +160,7 @@ class HRGAT(nn.Module):
         att_channels=32,
         dropout=0.5,
         num_layers=2,
+        negative_slop=0.2
     ):
         super().__init__()
 
@@ -206,6 +201,7 @@ class HRGAT(nn.Module):
                     out_dim=hidden_channels,
                     att_dim=att_channels,
                     dropout=dropout,
+                    negative_slope=negative_slop,
                 )
             )
 
@@ -325,7 +321,8 @@ class HRGNNModel(torch.nn.Module):
                  out_channels, 
                  num_layers, 
                  dropout,
-                 num_classes):
+                 num_classes,
+                 ):
         super().__init__()
         self.encoder = encoder
         
@@ -360,6 +357,7 @@ def get_model(
     att_channels:int,
     num_layers: int,
     dropout: float,
+    negative_slop:float,
     num_classes: int,
     device: torch.device
 ):
@@ -375,14 +373,16 @@ def get_model(
                       out_channels=out_channels,
                       att_channels=att_channels,
                       dropout=dropout,
-                      num_layers=num_layers)
+                      num_layers=num_layers,
+                      negative_slop=negative_slop,)
     elif model_type.lower() == 'gat':
         encoder = HRGAT(data=data,
                       hidden_channels=hidden_channels,
                       out_channels=out_channels,
                       att_channels=att_channels,
                       dropout=dropout,
-                      num_layers=num_layers)
+                      num_layers=num_layers,
+                      negative_slop=negative_slop)
     else:
         raise ValueError("Please choose model_type in ['gcn', 'gat']")
     
