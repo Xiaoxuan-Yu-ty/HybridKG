@@ -2,6 +2,7 @@
 
 """Carry out Radical search to identify extreme samples in the dataset and give them a single sample score."""
 
+import argparse
 import os
 from typing import Callable, Optional, List, Tuple, Any
 from scipy import stats
@@ -93,8 +94,8 @@ def do_radical_search(
                 if patient_position_in_distribution > upper_thresh:
                     output_df.loc[patient_index, feature] = 1
 
-    output_df.columns = data.index
-    output_df.index = data.columns
+    # output_df.columns = data.index
+    # output_df.index = data.columns
 
     summary_df = output_df.apply(pd.Series.value_counts)
 
@@ -356,6 +357,44 @@ def do_std(
     
     return output_df, summary_df_1
 
+def do_average(data: pd.DataFrame,
+               design: pd.DataFrame,
+               threshold,
+               control: str|int,
+               control_based=True) -> Tuple[pd.DataFrame,pd.DataFrame]:
+    
+    # 1. Align data and design -> data_t[samples, genes]
+    if all(s in data.columns for s in design.index[:5]):
+        data_t = data.transpose()
+    else:
+        data_t = data 
+    print(f"Transpose data shape: {data_t.shape}, supposed to be [sample * gene]")
+
+    # 2. Calculate Reference Stats
+    if control_based:
+        control_samples = design[design['Target'] == control].index
+        valid_refs = control_samples.intersection(data_t.index)
+    else:
+        # Use all available samples as the reference population
+        valid_refs = data_t.index
+    
+    # 3. Calculate stats across the reference rows
+    ref_mean = data_t.loc[valid_refs].mean(axis=0)
+
+    # 4. Scoring Logic: above average = 1, else -1
+    output_df = pd.DataFrame(0, index=data_t.index, columns=data_t.columns)
+    output_df[data_t >= ref_mean] = 1
+    output_df[data_t < ref_mean] = -1
+
+    # summary
+    label_mapping = {key: val for val, key in enumerate(np.unique(design['Target']))}
+    output_df['label'] = design.loc[output_df.index, 'Target'].map(label_mapping)
+    
+    summary_df = output_df.apply(pd.Series.value_counts)
+    
+
+    return output_df, summary_df
+
 def process_and_save(
     data: pd.DataFrame, 
     design: pd.DataFrame, 
@@ -379,7 +418,11 @@ def process_and_save(
     # Simple progress bar for the high-level step
     with tqdm(total=2, desc="Overall Progress") as pbar:
         # 1. do sample scoring
-        output_df, summary_df = do_function(data, design, threshold, control=control, **kwards)
+        output_df, summary_df = do_function(data=data, 
+                                            design=design, 
+                                            threshold=threshold, 
+                                            control=control, 
+                                            control_based=False)
         
         pbar.update(1)
         
@@ -395,3 +438,62 @@ def process_and_save(
 
     print(f"Done! Files saved to {output_dir}")
     return output_df, summary_df
+
+def main():
+    parser = argparse.ArgumentParser(description="Radical Search Pipeline")
+    
+    # File paths
+    parser.add_argument("--data", type=str, default="../AD/data/ADNI/adni_exp_2cls.csv", 
+                        help="Path to expression CSV")
+    parser.add_argument("--design", type=str, default="../AD/data/ADNI/design_2cls.csv", 
+                        help="Path to design CSV")
+    
+    # Method choice
+    parser.add_argument("--method", type=str, default='all',
+                        choices=['ecdf', 'std', 'logfc', 'all'], 
+                        help="Search method to use")
+    
+    # Parameters
+    parser.add_argument("--threshold", type=float, default=0.1, help="Threshold value")
+    parser.add_argument("--control", default=0, 
+                        help="Control group label")
+    parser.add_argument("--output_dir", type=str, default="../AD/data/ADNI/sample_scoring", 
+                        help="Output directory")
+
+    args = parser.parse_args()
+
+    # Load data
+    data = pd.read_csv(args.data, index_col=0)
+    design = pd.read_csv(args.design, index_col=0)
+    #design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
+
+    # Mapping methods
+    method_map = {
+        'ecdf': do_radical_search,
+        #'logfc': do_biological_logfc,
+        'std': do_std,
+        'all': do_average
+    }
+    threshold_map = {
+        'ecdf': 5,
+        'logfc': 0.1,
+        'std': 1.5,
+        'all': 0.1
+    }
+
+    # Execute
+    method = args.method
+    #for method in method_map.keys():
+    print(f"Running {args.method} with threshold {threshold_map[method]}...")
+    process_and_save(
+        data=data,
+        design=design,
+        threshold=threshold_map[method],
+        control=args.control,
+        do_function=method_map[method],
+        output_dir=args.output_dir,
+        method=method
+    )
+
+if __name__ == "__main__":
+    main()

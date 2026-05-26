@@ -161,6 +161,59 @@ def get_relation(u,v,rel, attr):
         relation = attr.get('relation')
     
     return relation
+def add_reverse_edges(kg: nx.MultiDiGraph):
+    """
+    Optionally adding reverse edges if not existing.
+    
+    Args:
+        kg: The input MultiDiGraph.
+    """
+    
+    # 1. Collect all edge types (for reporting/inspection)
+    all_rel_types = set()
+    for u, v, rel, attr in kg.edges(data=True, keys=True):
+        relation = get_relation(u,v,rel,attr)
+        all_rel_types.add(relation)
+    print(f"Found {len(all_rel_types)} initial unique relations: {all_rel_types}")
+
+    # 3. Create Reversed KG
+    # We copy the cleaned one so the reversed one is also 'causal-only'
+    reversed_kg = copy.deepcopy(kg)
+
+    added_rev_count = 0
+    # Use list() to avoid "dictionary changed size during iteration" error
+    edges_to_process = list(kg.edges(data=True, keys=True))
+
+    for u, v, rel, data in tqdm(edges_to_process, desc="Checking/Adding reverse edges"):
+        relation = get_relation(u,v,rel,data)
+        # skip patient-patient
+        if relation == 'similar':
+            continue
+        if relation and 'rev' in relation:
+            continue
+        else:
+            rev_rel = f"rev_{relation}"
+        
+        # Check if a reverse edge already exists
+        # for a MultiDiGraph, check all edges between v and u
+        has_rev = False
+        if reversed_kg.has_edge(v, u):
+            key = reversed_kg[v][u]
+            edge_type = list(key.keys())[0]
+            #print(edge_type)
+            if edge_type == rev_rel: 
+                has_rev = True
+                    
+        if not has_rev:
+            # Add the reverse edge with the same attributes but flipped nodes
+            rev_data = copy.deepcopy(data)
+            #print(f"Add reverse edge {rev_rel} to KG")
+            reversed_kg.add_edge(v, u, rev_rel, **rev_data)
+            added_rev_count += 1
+
+    print(f"Added {added_rev_count} reverse edges.")
+    
+    return reversed_kg
 
 def process_kg_for_gnn(kg: nx.MultiDiGraph, causal_keywords: list|set):
     """
