@@ -1,3 +1,4 @@
+import gc
 import pickle
 import json
 import numpy as np
@@ -82,7 +83,7 @@ def objective(trial, data, args, device):
             data=data,
             model_type=args.model,
             hidden_channels=hidden_channels,
-            out_channels=args.out_channels,
+            out_channels=2,
             att_channels=att_channels,
             num_layers=num_layers,
             dropout=dropout,
@@ -92,12 +93,26 @@ def objective(trial, data, args, device):
         )
         optimizer = torch.optim.AdamW(encoder.parameters(), lr=lr, weight_decay=weight_decay)
 
-        # Train (Shortened epochs for HPO speed)
-        trained_model, _ = train(encoder, data, optimizer, epochs=args.epochs/2, args=args)
+        try:
+            # Train (Shortened epochs for HPO speed)
+            trained_model, _ = train(encoder, data, optimizer, epochs=int(args.epochs/2), args=args)
+            
+            # Evaluate
+            val_metrics, _ = test(trained_model, data, 'val_mask')
+            score = val_metrics['F1_score']
+            fold_f1s.append(score)
+
+            # Optuna Pruning: Report intermediate result
+            trial.report(score, fold)
+            if trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
         
-        # Evaluate
-        val_metrics, _ = test(trained_model, data, 'val_mask')
-        fold_f1s.append(val_metrics['F1_score'])
+        finally:
+            # Clean up memory even if training fails or is pruned
+            del encoder, optimizer
+            if 'trained_model' in locals(): del trained_model
+            gc.collect()           # Python garbage collection
+            torch.cuda.empty_cache() # Clear GPU cache
 
     return np.mean(fold_f1s)
 
@@ -135,16 +150,18 @@ def final_CVEvaluation(new_data, study, args, device):
         # Test on Fold
         fold_metrics, _ = test(trained_model, new_data, 'test_mask')
         final_results[f"fold_{fold}"] = fold_metrics
-        return final_results
+    
+    return final_results
+
 def parse():
-    parser = argparse.ArgumentParser(description="Hierarchical Relational GNN Training Pipeline")
+    parser = argparse.ArgumentParser(description="Hierarchical Relational GNN HPO Pipeline")
 
     # Paths
-    parser.add_argument("--graph_path", type=str, default="../datasets/Patient_KGs/G_geo_dual_hybrid_ecdf.pkl")
+    parser.add_argument("--graph_path", type=str, default="../datasets/Patient_KGs/G_adni_dual_hybrid_ecdf.pkl")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="../results/HRGNN")
-    parser.add_argument('--dataset', type=str, default='geo', choices=['adni', 'geo'])
+    parser.add_argument("--output_dir", type=str, default="../results/HRGNN_HPO")
+    parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     parser.add_argument('--model', type=str, default='gat', choices=['gat', 'gcn'])
     parser.add_argument("--method", type=str, default="dual_hybrid", choices=['dual_hybrid','merge'], 

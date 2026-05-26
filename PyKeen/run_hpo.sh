@@ -3,12 +3,13 @@ set -e
 
 # Configuration Grids
 DATASETS=("geo" "adni" "adni_OldTarget")
-SCORINGS=("ecdf" "std" "all")
+SCORINGS=("ecdf" "all")
 METHODS=("ADKG") # "hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") # "TransE" "TransR" "HolE" "ComplEx")
 
 # Base directory for the graph files
-GRAPH_PATH="../datasets/Prime_KGs"
+GRAPH_PATH="../datasets/PPI_KGs"
+OUTPUT_PATH="../PyKeen/results/PPIKG"
 
 for dataset in "${DATASETS[@]}"; do
     for scoring in "${SCORINGS[@]}"; do
@@ -29,7 +30,8 @@ for dataset in "${DATASETS[@]}"; do
                         --dataset "$dataset" \
                         --scoring_type "$scoring" \
                         --method "$method" \
-                        --model "$model"
+                        --model "$model" \
+                        --output_dir "$OUTPUT_PATH"
                 done
             else
                 echo "Skipping: $graph_file not found."

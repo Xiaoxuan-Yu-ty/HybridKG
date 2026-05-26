@@ -2,10 +2,12 @@ import argparse
 import os
 from pathlib import Path
 import pickle
+import random
 import sys
 from pykeen.pipeline import pipeline
 from pykeen.models import TransE
-import numpy
+import numpy as np
+import torch
 from pykeen.triples import TriplesFactory
 import pandas as pd
 from pykeen.hpo import hpo_pipeline_from_path
@@ -53,14 +55,15 @@ def load_triple_factory(grap_path:str):
 
     # Iterate over all edges in the MultiDiGraph
     for u, v, rel, data in G.edges(data=True, keys=True):
-        # print(u,v,rel)
-        # print(data)
+        # check if the edge key 'rel' is a valid string
         if isinstance(rel, str):
             relation = rel
         else:
-            relation = data.get('type',None)
-            if relation == None: relation = data.get('relation')
-        if 'rev' not in relation:
+            # Fallback chain using dict.get() defaults
+            relation = data.get('type') or data.get('relation') or data.get('rel')
+
+        # 3. Guard against NoneType before checking 'rev'
+        if relation and 'rev' not in relation:
             triples.append((u, relation, v))
 
     # Convert to a DataFrame for easier handling
@@ -77,9 +80,18 @@ def load_triple_factory(grap_path:str):
     
     return triples_factory
 
+def set_all_seeds(seed: int = 42):
+    """Ensure complete reproducibility across PyTorch, NumPy, and Python."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 def run_all_hpo(triples_factory, config_dir: str, output_dir:str):
-    
+    set_all_seeds(42)
     # 1. split data
     ratios = [0.8, 0.1, 0.1]
     train, test, val = triples_factory.split(ratios, random_state=42)
@@ -109,7 +121,7 @@ def run_all_hpo(triples_factory, config_dir: str, output_dir:str):
         print(f"Results for {model_name} saved to {output}")
 
 def run_hpo(triples_factory, output_dir:str, model:str):
-    
+    set_all_seeds(42)
     # 1. split data
     ratios = [0.8, 0.1, 0.1]
     train, test, val = triples_factory.split(ratios, random_state=42)

@@ -3,28 +3,28 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-disease_kg="../datasets/base_kgs/ppi_hc.pkl"
-healthy_kg="../AD/data/KG/healthy_aging_reversed_remove_noncausal.pkl"
+disease_kg="../data/KG/ad_network_with_reverse_edges.pkl"
+healthy_kg="../data/KG/healthy_aging_reversed_remove_noncausal.pkl"
 
-BASE_OUT_DIR="../datasets/PPI_KGs"
+BASE_OUT_DIR="../datasets/Patient_KGs"
 
 # Predefined grids
-DATASETS=("geo" "adni" "adni_OldTarget")
-SCORINGS=("ecdf" "std" "all")
-METHODS=("dual_hybrid" "ADKG" "merge")
+DATASETS=("adni_OldTarget" "geo" "adni")
+SCORINGS=("std" "all")
+METHODS=("dual_hybrid" "ADKG" "HealthyKG")
 
 for dataset in "${DATASETS[@]}"; do
 
     if [ "$dataset" = "geo" ]; then
-        DATASET_DIR="../AD/data/GEO/GSE33000_ad_hd/sample_scoring"
-        EXP_PATH=""../AD/data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv""
+        DATASET_DIR="../data/GEO/GSE33000_ad_hd/sample_scoring"
+        EXP_PATH=""../data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv""
     elif [ "$dataset" = "adni" ]; then
-        DATASET_DIR="../AD/data/ADNI/sample_scoring"
-        EXP_PATH="../AD/data/ADNI/adni_exp_2cls.csv"
+        DATASET_DIR="../data/ADNI/sample_scoring"
+        EXP_PATH="../data/ADNI/adni_exp_2cls.csv"
     else
         # This handles "adni" and any other default cases
-        DATASET_DIR="../AD/data/ADNI/old_target"
-        EXP_PATH="../AD/data/ADNI/cleaned_gene_expression_data.csv"
+        DATASET_DIR="../data/ADNI/old_target"
+        EXP_PATH="../data/ADNI/cleaned_gene_expression_data.csv"
     fi
 
     for scoring in "${SCORINGS[@]}"; do
