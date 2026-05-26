@@ -8,8 +8,8 @@ METHODS=("ADKG") # "hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") # "TransE" "TransR" "HolE" "ComplEx")
 
 # Base directory for the graph files
-GRAPH_PATH="../datasets/PPI_KGs"
-OUTPUT_PATH="../PyKeen/results/PPIKG"
+GRAPH_PATH="../datasets/Patient_KGs"
+OUTPUT_PATH="../PyKeen/results/PatientKG"
 
 for dataset in "${DATASETS[@]}"; do
     for scoring in "${SCORINGS[@]}"; do
