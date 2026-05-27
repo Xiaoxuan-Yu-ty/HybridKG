@@ -36,7 +36,6 @@ for kg in "${KGS[@]}"; do
                     --kg "$kg" \
                     --dataset "$dataset" \
                     --scoring_type "$scoring" \
-                    --config "$CONFIG_DIR" \
                     --model "$model" \
                     --output_dir "$OUTPUT_DIR"
 

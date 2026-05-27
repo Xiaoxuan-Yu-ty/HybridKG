@@ -7,8 +7,8 @@ set -e
 PYTHON_SCRIPT="train_cls.py"
 
 # --- Define arrays of parameters to iterate over ---
-KGS=("PrimeKG" "PPIKG" "ADKG")
-DATASETS=("adni" "geo" "adni_OldTarget")
+KGS=("PPIKG" "ADKG") #"PrimeKG"
+DATASETS=("adni_OldTarget" "adni" "geo")
 SCORING_TYPES=("ecdf" "all") # "std")
 METHODS=("ADKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") #"TransE" "TransR" "HolE" "ComplEx")
@@ -17,7 +17,7 @@ MODELS=("RotatE") #"TransE" "TransR" "HolE" "ComplEx")
 OUTPUT_DIR="../PyKeen/results"
 
 echo "========================================================="
-echo " Starting Grid Experiment Suite"
+echo " Starting Retrain KGE & Classification"
 echo "========================================================="
 
 # Loop counter for user tracking
@@ -27,7 +27,6 @@ COUNTER=0
 for kg in "${KGS[@]}"; do
     if [ "$kg" = "PrimeKG" ]; then
         GRAPH_PATH="../datasets/Prime_KGs"
-
     elif [ "$kg" = "PPIKG" ]; then
         GRAPH_PATH="../datasets/PPI_KGs"
     else
@@ -38,7 +37,7 @@ for kg in "${KGS[@]}"; do
         if [ "$dataset" = "geo" ]; then
             LABEL_PATH="../data/GEO/GSE33000_ad_hd/sample_scoring/sample_scoring_all.csv"
         elif [ "$dataset" = "adni" ]; then
-            LABEL_PATH="../AD/data/ADNI/sample_scoring/sample_scoring_all.csv"
+            LABEL_PATH="../data/ADNI/sample_scoring/sample_scoring_all.csv"
         else
             # This handles "adni" and any other default cases
             LABEL_PATH="../data/ADNI/old_target//sample_scoring_all.csv"
@@ -48,13 +47,13 @@ for kg in "${KGS[@]}"; do
             for method in "${METHODS[@]}"; do
                 for model in "${MODELS[@]}"; do
                     
-                    ((COUNTER++))
+                    ((++COUNTER))
                     echo "[Experiment $COUNTER] Running: KG=$kg | Dataset=$dataset | Score=$scoring_type | Method=$method | Model=$model"
                     
                     # 1. Recreate the precise config path structure locally 
                     #    so we can stream the console logs into a dedicated file.
                     LOG_DIR="$OUTPUT_DIR/$kg/$dataset/$scoring_type/$method/$model"
-                    # mkdir -p "$LOG_DIR"
+                    mkdir -p "$LOG_DIR"
                     LOG_FILE="$LOG_DIR/execution_output.log"
                     
                     # 2. Execute the python command

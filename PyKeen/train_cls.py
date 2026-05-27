@@ -74,7 +74,10 @@ def get_node_embeddings(best_model, triples_factory):
             raise AttributeError("Could not automatically locate entity embeddings on this model.")
         
         # Convert to NumPy array for easy use with Scikit-Learn
-        embeddings_ndarray = embeddings_tensor.detach().numpy()
+        try:
+            embeddings_ndarray = embeddings_tensor.detach().numpy()
+        except TypeError:
+            embeddings_ndarray = embeddings_tensor.cpu().numpy()
     
     print(f"Extracted embeddings shape: {embeddings_ndarray.shape}")
 
@@ -205,7 +208,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph_path", type=str, default="../datasets/Prime_KGs/",
                         help="The Patient-KG Network Path")
-    parser.add_argument("--label_path", type=str, default="../AD/data/ADNI/sample_scoring/sample_scoring_all.csv")
+    parser.add_argument("--label_path", type=str, default="../data/ADNI/sample_scoring/sample_scoring_all.csv")
     
     # for saving and get config_path
     parser.add_argument("--kg", type=str, default='PrimeKG', choices=['PrimeKG','PPIKG','ADKG'])
