@@ -82,12 +82,12 @@ def get_pos_neg_edges(df):
             neg_list.extend((patient_node, 'express', dst) for dst in healthy_dst)
            
             pos_label_list.extend((patient_node, 'reg_disease', dst) for dst in disease_dst)
-            neg_label_list.extend((patient_node, 'reg_disease', dst) for dst in healthy_dst)
+            neg_label_list.extend((patient_node, 'reg_healthy', dst) for dst in healthy_dst)
         else:
             neg_list.extend((patient_node, 'express', dst) for dst in disease_dst)
             pos_list.extend((patient_node, 'express', dst) for dst in healthy_dst)
 
-            neg_label_list.extend((patient_node, 'reg_healthy', dst) for dst in disease_dst)
+            neg_label_list.extend((patient_node, 'reg_disease', dst) for dst in disease_dst)
             pos_label_list.extend((patient_node, 'reg_healthy', dst) for dst in healthy_dst)
     
     return splits, label_splits
@@ -219,23 +219,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph_path", type=str, default="../datasets/",
                         help="The Patient-KG Network Path")
-    parser.add_argument("--graph_summary_path", type=str, default="../datasets/Prime_KGs/Summary_adni_dual_hybrid_all.csv")
+    
     # for saving and get graph_path
     parser.add_argument('--kg', type=str, default='Prime_KGs', choices=['Patient_KGs', 'Prime_KGs', 'PPI_KGs'])
     parser.add_argument("--dataset", type=str, default="adni", choices=['adni','geo','adni_OldTarget'], 
                         help="Name of the dataset (for naming files).")
     parser.add_argument("--scoring_type", type=str, default="all", choices=['ecdf','std','all'],
                         help="The scoring method used (for naming files).")
-
-    parser.add_argument("--config", type=str, default="../PyKeen/configs")
     parser.add_argument("--model", type=str, default='RotatE',
                         choices=['TransE', 'TransR', 'RotatE', 'HolE', 'ComplEx'])
-    parser.add_argument("--output_dir", type=str, default='../PyKeen/results')
+    parser.add_argument("--output_dir", type=str, default='../PyKeen/results/LinkPrediction')
     
     args = parser.parse_args()
 
     # get graph file
     graph_file = Path(args.graph_path) / args.kg / f"G_{args.dataset}_dual_hybrid_{args.scoring_type}.pkl"
+    graph_summary_file = Path(args.graph_path) / args.kg / f"Summary_{args.dataset}_dual_hybrid_{args.scoring_type}.csv"
     print(f"\n-----Using Graph File {graph_file}------------------------")
 
     final_output_dir = os.path.join(
@@ -249,7 +248,7 @@ def main():
     print(f"\n-----Results will be saved to: {final_output_dir}---------")
 
     # data preparation
-    df = pd.read_csv(args.graph_summary_path, index_col=0)
+    df = pd.read_csv(graph_summary_file, index_col=0)
     splits,label_splits = get_pos_neg_edges(df=df)
 
     # 1. convert graph to TiplesFactory and split data
