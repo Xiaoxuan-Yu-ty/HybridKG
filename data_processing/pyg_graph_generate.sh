@@ -6,12 +6,12 @@ set -e
 disease_kg="../data/KG/ad_network_with_reverse_edges.pkl"
 healthy_kg="../data/KG/healthy_aging_reversed_remove_noncausal.pkl"
 
-BASE_OUT_DIR="../datasets/Patient_KGs"
+BASE_OUT_DIR="../datasets/Healthy_KGs"
 
 # Predefined grids
 DATASETS=("adni_OldTarget" "geo" "adni")
-SCORINGS=("std" "all")
-METHODS=("dual_hybrid" "ADKG" "HealthyKG")
+SCORINGS=("std" "all" "ecdf")
+METHODS=("HealthyKG") # "dual_hybrid" "ADKG" "merge")
 
 for dataset in "${DATASETS[@]}"; do
 
@@ -43,7 +43,7 @@ for dataset in "${DATASETS[@]}"; do
             
             echo "\nRunning: $dataset | $scoring | $method"
 
-            python pyg_graph_prep.py \
+            python pyg_graph_generator.py \
                 --kg_disease "$disease_kg" \
                 --kg_healthy "$healthy_kg" \
                 --exp_path "$EXP_PATH" \
