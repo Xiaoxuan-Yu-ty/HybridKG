@@ -10,7 +10,7 @@ PYTHON_SCRIPT="train_cls.py"
 KGS=("PPIKG" "ADKG") #"PrimeKG"
 DATASETS=("adni_OldTarget" "adni" "geo")
 SCORING_TYPES=("ecdf" "all") # "std")
-METHODS=("ADKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
+METHODS=("DiseaseKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") #"TransE" "TransR" "HolE" "ComplEx")
 
 # --- Fixed paths ---
