@@ -28,4 +28,6 @@ CLEP_replication/cli.py
 CLEP_replication/constants.py
 CLEP_replication/networks
 CLEP_repeat/networks
-CLEP_repeat/kge_result
+CLEP_repeat/kge_result/train.edgelist
+CLEP_repeat/kge_result/test.edgelist
+CLEP_repeat/kge_result/validation.edgelist

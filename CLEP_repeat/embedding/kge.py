@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """Embed patients with the biomedical entities (genes and metabolites) using Knowledge graph embedding."""
+import json
 import os
 from typing import Tuple, Dict, Any
 
@@ -10,7 +11,7 @@ import pandas as pd
 from pykeen.hpo.hpo import hpo_pipeline_from_config
 from pykeen.models.nbase import ERModel
 from pykeen.typing import HeadRepresentation, RelationRepresentation, TailRepresentation
-from pykeen.pipeline import pipeline_from_path, PipelineResult
+from pykeen.pipeline import pipeline_from_config, pipeline_from_path, PipelineResult
 from pykeen.triples import TriplesFactory
 
 def do_kge(
@@ -63,13 +64,14 @@ def do_kge(
     validation_triples_factory = TriplesFactory.from_path(validation_path, create_inverse_triples=True)
     test_triples_factory = TriplesFactory.from_path(test_path, create_inverse_triples=True)
 
+    # HPO
     run_optimization(
         dataset=(train_triples_factory, validation_triples_factory, test_triples_factory),
         model_config=model_config,
         out_dir=out
     )
-
-    pipeline_results = run_pipeline(
+    # Retrain with best HP
+    pipeline_results = run_pipeline(train_triples_factory, test_triples_factory, validation_triples_factory,
         out_dir=out
     )
 
@@ -171,14 +173,29 @@ def run_optimization(dataset: Tuple[TriplesFactory, TriplesFactory, TriplesFacto
     hpo_results.save_to_directory(optimization_dir)
 
 
-def run_pipeline(
+def run_pipeline(train_tf, test_tf, validation_tf,
         out_dir: str
 ) -> PipelineResult:
     """Run Pipeline."""
 
     config_path = os.path.join(out_dir, 'pykeen_results_optim', 'best_pipeline', 'pipeline_config.json')
-    pipeline_results = pipeline_from_path(
-        path=config_path
+    with open(config_path, 'r') as f:
+        best_config_dict = json.load(f)
+
+    # Remove ALL structural keys causing duplicates or path errors
+    if "pipeline" in best_config_dict:
+        inner_pipeline = best_config_dict["pipeline"]
+        inner_pipeline.pop("dataset", None)
+        inner_pipeline.pop("training", None)
+        inner_pipeline.pop("testing", None)
+        inner_pipeline.pop("validation", None)
+
+    # Execute training safely using your in-memory objects
+    pipeline_results = pipeline_from_config(
+        config=best_config_dict,
+        training=train_tf,
+        testing=test_tf,
+        validation=validation_tf
     )
 
     best_pipeline_dir = os.path.join(out_dir, 'pykeen_results_final')
@@ -187,4 +204,5 @@ def run_pipeline(
 
     pipeline_results.save_to_directory(best_pipeline_dir, save_replicates=True)
 
+    print(f"Retraining completed successfully! Results save to {best_pipeline_dir}")
     return pipeline_results
