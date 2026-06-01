@@ -370,8 +370,8 @@ class PatientNetworkGenerator:
                 weight_value = float(exp_df.loc[patient, symbol])
                 
                 # Use relation as the 'key' for MultiDiGraph edges
-                overlay_graph.add_edge(patient, protein_node, relation=rel, weight=weight_value)
-                overlay_graph.add_edge(protein_node, patient, relation=f'rev_{rel}', weight=weight_value)
+                overlay_graph.add_edge(patient, protein_node, relation=rel, weight=weight_value, label=patient_labels[patient])
+                overlay_graph.add_edge(protein_node, patient, relation=f'rev_{rel}', weight=weight_value,label=patient_labels[patient])
                 
                 col = 'pos_edges' if int(val) == 1 else 'neg_edges'
                 summary_df.at[patient, col] += 1
@@ -602,6 +602,7 @@ def generat_and_save_hybrid(exp_path:str,
     # prepare save path
     os.makedirs(output_dir, exist_ok=True)
     save_network = os.path.join(output_dir, f"G_{dataset}_{process_method}_{scoring_method}.pkl")
+    save_edgelist = os.path.join(output_dir, f"Edgelist_{dataset}_{process_method}_{scoring_method}.csv")
     save_summary = os.path.join(output_dir, f"Summary_{dataset}_{process_method}_{scoring_method}.csv")
     
     # 1. Load expression df, smaple scoring df, KG
@@ -662,14 +663,17 @@ def generat_and_save_hybrid(exp_path:str,
     else:
         raise ValueError("Invalid process_method, please choose from ['hybrid','DiseaseKG','HealthyKG']")
         
-    # 3. sanitize network node types
-    netwrok = sanitize_node_types(network)
+    # 3. Convert network to triples: edgelist df
+    graph_df = nx.to_pandas_edgelist(network)
+    graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
+    graph_df=graph_df[['source','target','relation','label']]
+    graph_df.to_csv(save_edgelist)
     
     # 4. save
     save_graph(network, save_network)
     summary.to_csv(save_summary)
 
-    return network, summary
+    return network, graph_df, summary
 
 
 def main():
@@ -680,18 +684,18 @@ def main():
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_replication/networks/PPI_KGs_my", 
+    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/networks/PPI_KGs", 
                         help="Directory to save generated networks.")
 
     # Arguments need to change
     parser.add_argument("--exp_path", type=str, default="../data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--dataset", type=str, default="adni", 
+    parser.add_argument("--dataset", type=str, default="adni_OldTarget", 
                         help="Name of the dataset (for naming files).")
 
     parser.add_argument("--scoring_path", type=str, default="../data/ADNI/old_target/ecdf_1/sample_scoring_ecdf.csv", 
                         help="Path to sample scoring CSV (must contain 'label' column).")
-    parser.add_argument("--scoring_type", type=str, default="ecdf1", choices=['ecdf','std','all'],
+    parser.add_argument("--scoring_type", type=str, default="ecdf", choices=['ecdf','std','all'],
                         help="The scoring method used (for naming files).")
     
     parser.add_argument("--method", type=str, default="DiseaseKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
@@ -706,7 +710,7 @@ def main():
         print(f"--- Initializing Generation: dataset-{args.dataset} |{args.method} | {scoring_method}---")
         try:
             # The main logic call
-            network, summary = generat_and_save_hybrid(
+            network, graph_df, summary = generat_and_save_hybrid(
                 exp_path=args.exp_path,
                 scoring_path=scoring_path,
                 kg_disease_path=args.kg_disease,

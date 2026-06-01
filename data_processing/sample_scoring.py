@@ -51,7 +51,7 @@ def do_radical_search(
 
     # Create a dataframe initialized with 0's [patients x features]
     output_df = pd.DataFrame(0, index=data_transpose.index, columns=data_transpose.columns)
-    print('output_df columns:', output_df.columns)
+    # print('output_df columns:', output_df.columns)
     # Values that are greater than the threshold or lesser than negative threshold are considered as extremes.
     upper_thresh = 1 - (threshold / 100)
     lower_thresh = (threshold / 100)
