@@ -3,13 +3,13 @@ set -e
 
 # Configuration Grids
 DATASETS=("geo" "adni" "adni_OldTarget")
-SCORINGS=("ecdf" "all")
+SCORINGS=("ecdf" "all" "std")
 METHODS=("ADKG") # "hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") # "TransE" "TransR" "HolE" "ComplEx")
 
 # Base directory for the graph files
-GRAPH_PATH="../datasets/Patient_KGs"
-OUTPUT_PATH="../PyKeen/results/PatientKG"
+GRAPH_PATH="../datasets/new/Prime_KGs"
+OUTPUT_PATH="../PyKeen/results/PrimeKG"
 
 for dataset in "${DATASETS[@]}"; do
     for scoring in "${SCORINGS[@]}"; do
