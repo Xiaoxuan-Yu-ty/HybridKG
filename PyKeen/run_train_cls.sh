@@ -7,10 +7,10 @@ set -e
 PYTHON_SCRIPT="train_cls.py"
 
 # --- Define arrays of parameters to iterate over ---
-KGS=("ADKG") #"PrimeKG" "PPIKG"
-DATASETS=("adni" "geo" "adni_OldTarget")
-SCORING_TYPES=("all" "ecdf") # "std")
-METHODS=("ADKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
+KGS=("PPIKG" "ADKG") #"PrimeKG"
+DATASETS=("adni_OldTarget" "adni" "geo")
+SCORING_TYPES=("ecdf" "all") # "std")
+METHODS=("DiseaseKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") #"TransE" "TransR" "HolE" "ComplEx")
 
 # --- Fixed paths ---

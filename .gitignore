@@ -9,3 +9,13 @@ PrimeKG
 CLEP_PPIKG
 PyKeen/configs
 PyKeen/results
+CLEP_PPIKG_neo4j/logs
+CLEP_PPIKG_neo4j/ppi_hc.csv
+CLEP_PPIKG_neo4j/hippie_current.txt
+CLEP_PPIKG_neo4j/string_high_confidence_ppi.txt
+PrimeKG_neo4j/logs
+PrimeKG_neo4j/disease_features.csv
+PrimeKG_neo4j/PrimeKG.csv
+PrimeKG_neo4j/import
+CLEP_PPIKG_neo4j/import/edges.csv
+CLEP_PPIKG_neo4j/import/nodes.csv

@@ -638,7 +638,7 @@ def generat_and_save_hybrid(exp_path:str,
                                         data=data,
                                         exp_df=exp_norm,
                                         )
-    elif process_method == 'ADKG':
+    elif process_method == 'DieaseKG':
         network, summary = png.generate(data=data,
                                         exp_df=exp_norm,
                                         base_graph='disease')
@@ -694,7 +694,7 @@ def main():
     parser.add_argument("--scoring_type", type=str, default="all", choices=['ecdf','std','all'],
                         help="The scoring method used (for naming files).")
     
-    parser.add_argument("--method", type=str, default="ADKG", choices=['dual_hybrid','merge', 'ADKG','HealthyKG'], 
+    parser.add_argument("--method", type=str, default="ADKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
                         help="Network construction strategy.")
     
     args = parser.parse_args()
