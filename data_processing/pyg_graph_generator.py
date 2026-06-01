@@ -638,7 +638,7 @@ def generat_and_save_hybrid(exp_path:str,
                                         data=data,
                                         exp_df=exp_norm,
                                         )
-    elif process_method == 'DieaseKG':
+    elif process_method == 'DiseaseKG':
         network, summary = png.generate(data=data,
                                         exp_df=exp_norm,
                                         base_graph='disease')
@@ -660,7 +660,7 @@ def generat_and_save_hybrid(exp_path:str,
         # combine tw network
         network = merge_2kg(G=network_d, H=network_h)
     else:
-        raise ValueError("Invalid process_method, please choose from ['hybrid','ADKG','HealthyKG']")
+        raise ValueError("Invalid process_method, please choose from ['hybrid','DiseaseKG','HealthyKG']")
         
     # 3. sanitize network node types
     netwrok = sanitize_node_types(network)
@@ -676,54 +676,52 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # Stable Arguments
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/prime_ad_kg.pkl", 
+    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/ppi_hc.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../datasets/Prime_KGs", 
+    parser.add_argument("--output_dir", type=str, default="../CLEP_replication/networks/PPI_KGs_my", 
                         help="Directory to save generated networks.")
 
     # Arguments need to change
-    parser.add_argument("--exp_path", type=str, default="../data/ADNI/adni_exp_2cls.csv", 
+    parser.add_argument("--exp_path", type=str, default="../data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
     parser.add_argument("--dataset", type=str, default="adni", 
                         help="Name of the dataset (for naming files).")
 
-    parser.add_argument("--scoring_path", type=str, default="../data/ADNI/sample_scoring/sample_scoring_all.csv", 
+    parser.add_argument("--scoring_path", type=str, default="../data/ADNI/old_target/ecdf_1/sample_scoring_ecdf.csv", 
                         help="Path to sample scoring CSV (must contain 'label' column).")
-    parser.add_argument("--scoring_type", type=str, default="all", choices=['ecdf','std','all'],
+    parser.add_argument("--scoring_type", type=str, default="ecdf1", choices=['ecdf','std','all'],
                         help="The scoring method used (for naming files).")
     
-    parser.add_argument("--method", type=str, default="ADKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
+    parser.add_argument("--method", type=str, default="DiseaseKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
                         help="Network construction strategy.")
     
     args = parser.parse_args()
 
-    # Define patterns based on input
     
-    pattern_hgnc =  r'^p\(HGNC:"([^"]+)"\)$'
-    pattern_uniprotkb =  r'^p\(UniProtKB:"([^"_%]+)_[A-Z]+"\)$'
+    for threshold in [1,1.5,2.5,5,10,20]:
+        scoring_path = f"../data/ADNI/old_target/ecdf_{threshold}/sample_scoring_ecdf.csv"
+        scoring_method = f"ecdf_{threshold}"
+        print(f"--- Initializing Generation: dataset-{args.dataset} |{args.method} | {scoring_method}---")
+        try:
+            # The main logic call
+            network, summary = generat_and_save_hybrid(
+                exp_path=args.exp_path,
+                scoring_path=scoring_path,
+                kg_disease_path=args.kg_disease,
+                kg_health_path=args.kg_healthy,
+                output_dir=args.output_dir,
+                process_method=args.method,
+                scoring_method=scoring_method,
+                dataset=args.dataset
+            )
+            
+            print("\nProcess Complete.")
+            print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
 
-    print(f"--- Initializing Generation: {args.method} ---")
-    
-    try:
-        # The main logic call
-        network, summary = generat_and_save_hybrid(
-            exp_path=args.exp_path,
-            scoring_path=args.scoring_path,
-            kg_disease_path=args.kg_disease,
-            kg_health_path=args.kg_healthy,
-            output_dir=args.output_dir,
-            process_method=args.method,
-            scoring_method=args.scoring_type,
-            dataset=args.dataset
-        )
-        
-        print("\nProcess Complete.")
-        print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
-
-    except Exception as e:
-        print(f"Critical Error during network generation: {e}")
+        except Exception as e:
+            print(f"Critical Error during network generation: {e}")
 
 if __name__ == "__main__":
     main()

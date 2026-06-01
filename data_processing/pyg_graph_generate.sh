@@ -10,7 +10,7 @@ BASE_OUT_DIR="../datasets/Healthy_KGs"
 
 # Predefined grids
 DATASETS=("adni_OldTarget" "geo" "adni")
-SCORINGS=("std" "all" "ecdf")
+SCORINGS=("ecdf") #"std" "all")
 METHODS=("HealthyKG") # "dual_hybrid" "ADKG" "merge")
 
 for dataset in "${DATASETS[@]}"; do

@@ -19,3 +19,11 @@ PrimeKG_neo4j/PrimeKG.csv
 PrimeKG_neo4j/import
 CLEP_PPIKG_neo4j/import/edges.csv
 CLEP_PPIKG_neo4j/import/nodes.csv
+CLEP_replication/__main__.py
+CLEP_replication/classification
+CLEP_replication/embedding
+CLEP_replication/sample_scoring
+CLEP_replication/__init__.py
+CLEP_replication/cli.py
+CLEP_replication/constants.py
+CLEP_replication/networks

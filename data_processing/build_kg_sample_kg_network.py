@@ -23,7 +23,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 from utils.graph_utils import load_graph, save_graph
-from utils.sample_scoring import process_and_save
+from data_processing.sample_scoring import process_and_save
 
 def main():
     

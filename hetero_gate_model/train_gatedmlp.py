@@ -25,7 +25,7 @@ except NameError:
 sys.path.append(os.path.dirname(base_dir))
 
 from utils.graph_utils import load_graph, save_graph
-from utils.sample_scoring import process_and_save, do_radical_search, do_biological_logfc, do_std
+from data_processing.sample_scoring import process_and_save, do_radical_search, do_biological_logfc, do_std
 from data_processing.network_generator import PatientNetworkGenerator, build_knn_graph_with_masks
 from hetero_base_models.train_hybridkg import (
     split_edges,
