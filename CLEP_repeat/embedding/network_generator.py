@@ -184,6 +184,7 @@ def main():
     with open(args.kg_path, 'rb') as f:
         kg = pickle.load(f)
     kg_data: pd.DataFrame = nx.to_pandas_edgelist(kg)
+    kg_data = kg_data[['source','rel','target']]
 
     for threshold in [1]:#,1.5,2.5,5,10,20]:
         scoring_path = f"../../data/ADNI/old_target/ecdf_{threshold}/sample_scoring_ecdf.csv"
