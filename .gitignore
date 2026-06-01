@@ -27,3 +27,4 @@ CLEP_replication/__init__.py
 CLEP_replication/cli.py
 CLEP_replication/constants.py
 CLEP_replication/networks
+CLEP_repeat/networks
