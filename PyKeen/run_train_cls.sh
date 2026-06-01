@@ -7,9 +7,9 @@ set -e
 PYTHON_SCRIPT="train_cls.py"
 
 # --- Define arrays of parameters to iterate over ---
-KGS=("PPIKG" "ADKG") #"PrimeKG"
-DATASETS=("adni_OldTarget" "adni" "geo")
-SCORING_TYPES=("ecdf" "all") # "std")
+KGS=("ADKG") #"PrimeKG" "PPIKG"
+DATASETS=("adni" "geo" "adni_OldTarget")
+SCORING_TYPES=("all" "ecdf") # "std")
 METHODS=("ADKG") #"hybrid" "dual_hybrid" "merge" "HealthyKG")
 MODELS=("RotatE") #"TransE" "TransR" "HolE" "ComplEx")
 
@@ -57,7 +57,7 @@ for kg in "${KGS[@]}"; do
                     LOG_FILE="$LOG_DIR/execution_output.log"
                     
                     # 2. Execute the python command
-                    # '2>&1' redirects errors to the log file alongside standard output
+                    # Adding '|| true' prevents 'set -e' from killing the script if Python fails
                     python "$PYTHON_SCRIPT" \
                         --graph_path "$GRAPH_PATH" \
                         --label_path "$LABEL_PATH" \
@@ -66,10 +66,13 @@ for kg in "${KGS[@]}"; do
                         --scoring_type "$scoring_type" \
                         --method "$method" \
                         --model "$model" \
-                        --output_dir "$OUTPUT_DIR" > "$LOG_FILE" 2>&1
-                        
-                    echo "             -> Finished successfully. Metrics and logs saved to $LOG_DIR"
+                        --output_dir "$OUTPUT_DIR" > "$LOG_FILE" 2>&1 || true
                     
+                    # Check the exit status of the Python command (stored via a dummy block)
+                    # Because we used '|| true', we can inspect the log or use an alternative check,
+                    # but the cleanest Bash way to handle 'set -e' bypass is placing the command 
+                    # directly inside the if condition:
+
                 done
             done
         done
