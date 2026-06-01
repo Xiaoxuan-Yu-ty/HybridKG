@@ -31,3 +31,4 @@ CLEP_repeat/networks
 CLEP_repeat/kge_result/train.edgelist
 CLEP_repeat/kge_result/test.edgelist
 CLEP_repeat/kge_result/validation.edgelist
+CLEP_repeat/kge_result/pykeen_results_final/sample_embeddings.csv

@@ -65,12 +65,14 @@ def do_kge(
     test_triples_factory = TriplesFactory.from_path(test_path, create_inverse_triples=True)
 
     # HPO
+    print("\n--------------Run KGE HPO------------------------------------")
     run_optimization(
         dataset=(train_triples_factory, validation_triples_factory, test_triples_factory),
         model_config=model_config,
         out_dir=out
     )
     # Retrain with best HP
+    print("\n--------------Retrain KGE with Best HP------------------------------------")
     pipeline_results = run_pipeline(train_triples_factory, test_triples_factory, validation_triples_factory,
         out_dir=out
     )
@@ -91,7 +93,7 @@ def do_kge(
 
     if return_patients:
         # TODO: Use clustering before classification to see if embeddings are already good enough
-        embedding = embedding[embedding.index.isin(design_norm_df['FileName'])]
+        embedding = embedding[embedding.index.isin(design_norm_df.index)]
 
         for index in embedding.index:
             embedding.at[index, 'label'] = label_mapping[index]

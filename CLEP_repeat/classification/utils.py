@@ -338,6 +338,10 @@ def _binary_scorer(scoring: List[str], cv_results: Dict[str, Any], y_test: npt.N
         if metric == 'roc_auc':
             roc_auc = metrics.roc_auc_score(y_test, y_pred)
             cv_results['test_roc_auc'].append(roc_auc)
+        
+        elif metric == 'average_precision':
+            auprc = metrics.average_precision_score(y_true=y_test,y_score=y_pred)
+            cv_results['test_auprc'].append(auprc)
 
         elif metric == 'f1':
             f1 = metrics.f1_score(y_test, y_pred)
