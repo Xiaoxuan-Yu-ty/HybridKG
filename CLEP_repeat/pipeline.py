@@ -149,26 +149,23 @@ def main():
         'all': do_average
     }
     # Execute
-    scoring_method = args.scoring_type
-    #for method in method_map.keys():
-    
-    for threshold in [1, 1.5, 2.5, 5, 10, 20]:
-        print(f"\nRunning Sample Scoring {scoring_method} with threshold {threshold}...")
+    for threshold in [1.5, 2.5, 5, 10, 20]:
+        print(f"\nRunning Sample Scoring {args.scoring_type} with threshold {threshold}...")
         overall_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}')
-        
+
         process_and_save(
             data=data,
             design=design,
             threshold=threshold,
             control=args.control,
-            do_function=method_map[scoring_method],
+            do_function=method_map[args.scoring_type],
             output_dir=overall_output,
-            method=scoring_method
+            method=args.scoring_type
             )
         
         # 2. generate network
-        scoring_method = scoring_method + f"_{threshold}"
-        scoring_path = os.path.join(overall_output,'sample_scoring_ecdf.csv')
+        scoring_method = args.scoring_type + f"_{threshold}"
+        scoring_path = os.path.join(overall_output,f'sample_scoring_ecdf.csv')
         print(f"\n--- Initializing Network Generation: dataset:{args.dataset} |{args.graph_method} | {scoring_method}---")
         try:
             # The main logic call
