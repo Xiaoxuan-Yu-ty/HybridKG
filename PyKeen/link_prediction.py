@@ -162,7 +162,7 @@ def run_hpo(triples_factory, output_dir:str, model:str):
 
     return hpo_result
 
-def retrain_with_best_params(hpo_result, triples_factory, output_dir):
+def retrain_with_best_params(triples_factory, output_dir):
     print("\n--- Retraining Best Model Configuration ---")
 
     ratios = [0.8, 0.1, 0.1]
