@@ -3,7 +3,7 @@
 """Embed patients with the biomedical entities (genes and metabolites) using Knowledge graph embedding."""
 import json
 import os
-from typing import Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any
 
 import numpy as np
 import numpy.typing as npt
@@ -100,6 +100,87 @@ def do_kge(
 
     return embedding
 
+def do_retrain(
+        edgelist: pd.DataFrame,
+        design: pd.DataFrame,
+        out: str,
+        best_config: Dict[str, Any],
+        return_patients: bool = True,
+        train_size: float = 0.8,
+        validation_size: float = 0.1,
+        complex_embedding: bool = False
+) -> pd.DataFrame:
+    """Carry out KGE on the given data.
+
+    :param edgelist: Dataframe containing the patient-feature graph in edgelist format
+    :param design: Dataframe containing the design table for the data
+    :param out: Output folder for the results
+    :param model_config: Configuration file for the KGE models, in JSON format.
+    :param return_patients: Flag to indicate if the final data should contain only patients or even the features
+    :param train_size: Size of the training data for KGE ranging from 0 - 1
+    :param validation_size: Size of the validation data for KGE ranging from 0 - 1. It must be lower than training size
+    :param complex_embedding: Flag to indicate if only the real part of the embedding should be returned.
+    :return: Dataframe containing the embedding from the KGE
+    """
+    design_norm_df = design.astype(str, copy=True)
+
+    unique_nodes = edgelist[~edgelist['label'].isna()].drop_duplicates('source')
+
+    # Create a mapping of the patient to the label. The patient id is converted to string to avoid duplicates
+    label_mapping = {str(patient): label for patient, label in zip(unique_nodes['source'], unique_nodes['label'])}
+
+    edgelist = edgelist.drop(columns='label')
+
+    # Split the edgelist into training, validation and testing data
+    train, validation, test = _weighted_splitter(
+        edgelist=edgelist,
+        train_size=train_size,
+        validation_size=validation_size
+    )
+
+    train_path = os.path.join(out, 'train.edgelist')
+    validation_path = os.path.join(out, 'validation.edgelist')
+    test_path = os.path.join(out, 'test.edgelist')
+
+    train.to_csv(train_path, sep='\t', index=False, header=False)
+    validation.to_csv(validation_path, sep='\t', index=False, header=False)
+    test.to_csv(test_path, sep='\t', index=False, header=False)
+    
+    train_triples_factory = TriplesFactory.from_path(train_path, create_inverse_triples=True)
+    validation_triples_factory = TriplesFactory.from_path(validation_path, create_inverse_triples=True)
+    test_triples_factory = TriplesFactory.from_path(test_path, create_inverse_triples=True)
+
+    # Retrain with best HP
+    print("\n--------------Retrain KGE with Best HP------------------------------------")
+    pipeline_results = run_pipeline(train_tf=train_triples_factory, 
+                                    test_tf=test_triples_factory, 
+                                    validation_tf=validation_triples_factory,
+                                    out_dir=out,
+                                    best_config_dict=best_config
+                                    )
+
+    best_model, triple_factory = pipeline_results.model, pipeline_results.training
+
+    # Get the embedding as a numpy array. Ignore the type as the model will be of type ERModel (Embedding model)
+    embedding_values = _model_to_numpy(best_model, complex=complex_embedding)  # type: ignore
+
+    # Create columns as component names
+    embedding_columns = [f'Component_{i}' for i in range(1, embedding_values.shape[1] + 1)]
+
+    # Get the nodes of the training triples as index
+    node_list = list(triple_factory.entity_to_id.keys())
+    embedding_index = sorted(node_list, key=lambda x: triple_factory.entity_to_id[x])
+
+    embedding = pd.DataFrame(data=embedding_values, columns=embedding_columns, index=embedding_index)
+
+    if return_patients:
+        # TODO: Use clustering before classification to see if embeddings are already good enough
+        embedding = embedding[embedding.index.isin(design_norm_df.index)]
+
+        for index in embedding.index:
+            embedding.at[index, 'label'] = label_mapping[index]
+
+    return embedding
 
 def _weighted_splitter(
         edgelist: pd.DataFrame,
@@ -175,14 +256,20 @@ def run_optimization(dataset: Tuple[TriplesFactory, TriplesFactory, TriplesFacto
     hpo_results.save_to_directory(optimization_dir)
 
 
-def run_pipeline(train_tf, test_tf, validation_tf,
-        out_dir: str
-) -> PipelineResult:
+def run_pipeline(train_tf,
+                 test_tf,
+                 validation_tf,
+                 out_dir: str,
+                 best_config_dict: Optional[Dict[str, Any]] = None
+                 ) -> PipelineResult:
     """Run Pipeline."""
 
-    config_path = os.path.join(out_dir, 'pykeen_results_optim', 'best_pipeline', 'pipeline_config.json')
-    with open(config_path, 'r') as f:
-        best_config_dict = json.load(f)
+    if best_config_dict is None:
+        config_path = os.path.join(out_dir, 'pykeen_results_optim', 'best_pipeline', 'pipeline_config.json')
+        with open(config_path, 'r') as f:
+            best_config_dict = json.load(f)
+
+    assert best_config_dict is not None
 
     # Remove ALL structural keys causing duplicates or path errors
     if "pipeline" in best_config_dict:

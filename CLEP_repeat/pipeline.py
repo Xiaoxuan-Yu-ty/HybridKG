@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(base_dir))
 
 from data_processing.pyg_graph_generator import generat_and_save_hybrid
 from data_processing.sample_scoring import *
-from CLEP_repeat.embedding.kge import do_kge
+from CLEP_repeat.embedding.kge import do_kge, do_retrain
 from CLEP_repeat.classification.hpo import *
 
 hpo_config = {
@@ -87,6 +87,50 @@ hpo_config = {
     }
 }
 
+rotate_best_config= {
+  "metadata": {
+    "best_trial_evaluation": 0.0004650848145580003,
+    "best_trial_number": 0,
+    "git_hash": "UNHASHED",
+    "version": "1.11.1"
+  },
+  "pipeline": {
+    "evaluation_kwargs": {
+      "batch_size": 1024
+    },
+    "evaluator": "rankbased",
+    "evaluator_kwargs": {
+      "filtered": True
+    },
+    "filter_validation_when_testing": True,
+    "loss": "nssa",
+    "loss_kwargs": {
+      "adversarial_temperature": 0.93,
+      "margin": 23.92
+    },
+    "model": "rotate",
+    "model_kwargs": {
+      "embedding_dim": 128
+    },
+    "negative_sampler": "basic",
+    "negative_sampler_kwargs": {
+      "num_negs_per_pos": 22
+    },
+    "optimizer": "adam",
+    "optimizer_kwargs": {
+      "lr": 0.00212759038543981
+    },
+    "testing": "<user defined>",
+    "training": "<user defined>",
+    "training_kwargs": {
+      "batch_size": 1024,
+      "num_epochs": 200
+    },
+    "training_loop": "slcwa",
+    "validation": "<user defined>"
+  }
+}
+
 def parser():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
@@ -117,7 +161,7 @@ def parser():
     parser.add_argument("--graph_method", type=str, default="DiseaseKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
                         help="Network construction strategy.")
     # KGE arguments
-
+    parser.add_argument("--kge_hpo", action="store_true", help="Enable KGE HPO Process.")
     # CLS arguments
     parser.add_argument("--cls_model", type=str, default='logistic_regression', 
                         choices=['logistic_regression',
@@ -170,6 +214,9 @@ def main():
         scoring_method = scoring_method + f"_{threshold}"
         scoring_path = os.path.join(overall_output,'sample_scoring_ecdf.csv')
         print(f"\n--- Initializing Network Generation: dataset:{args.dataset} |{args.graph_method} | {scoring_method}---")
+        
+        network=None
+        graph_df=None
         try:
             # The main logic call
             network, graph_df, summary = generat_and_save_hybrid(
@@ -189,16 +236,30 @@ def main():
         except Exception as e:
             print(f"Critical Error during network generation: {e}")
 
-        # 3. do KGE to get sample embeddings
+        # 3. do KGE to get sample embeddings (only if graph_df was created)
+        if graph_df is None:
+            print("No graph edgelist available — skipping KGE and classification.")
+            sys.exit(1)
+
         print("\n-------------Do KGE---------------------------------------------")
-        embeddings = do_kge(edgelist=graph_df,
-                            design=design,
-                            out=overall_output,
-                            model_config=hpo_config,
-                            return_patients=True,
-                            train_size=0.8, validation_size=0.1,
-                            complex_embedding=False)
-        embeddings.to_csv()
+
+        if args.kge_hpo:
+            embeddings = do_kge(edgelist=graph_df,
+                                design=design,
+                                out=overall_output,
+                                model_config=hpo_config,
+                                return_patients=True,
+                                train_size=0.8, validation_size=0.1,
+                                complex_embedding=False)
+        else:
+            embeddings = do_retrain(edgelist=graph_df,
+                                design=design,
+                                out=overall_output,
+                                best_config=rotate_best_config,
+                                return_patients=True,
+                                train_size=0.8, validation_size=0.1,
+                                complex_embedding=False)
+        embeddings.to_csv(os.path.join(overall_output,'embedding.csv'))
 
         # 4. do classification
         print("\n-------------Run Classification HPO---------------------------------------------")
