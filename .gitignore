@@ -35,3 +35,5 @@ CLEP_repeat/kge_result/pykeen_results_final/sample_embeddings.csv
 CLEP_repeat/retrain_rotate
 PrimeKG_neo4j/kg_grouped_diseases.csv
 PrimeKG_neo4j/kg_grouped.csv
+
+CLEP_repeat/clep_resources

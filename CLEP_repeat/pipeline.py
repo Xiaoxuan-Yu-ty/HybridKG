@@ -78,7 +78,6 @@ hpo_config = {
         }
     },
     
-    # 2. mandatory "optuna" key to control the HPO mechanics
     "optuna": {
         "n_trials": 100,       # Number of parameter combinations to try
         "timeout": 7200,      # Optional: Max time in seconds (1 hour)
