@@ -132,7 +132,7 @@ def overlay_samples(
                 continue
 
             # Skip if gene is not in the knowledge graph
-            if gene+'_HUMAN' in information_graph.nodes:
+            if gene in information_graph.nodes:
                 if overlay_graph.has_edge(patient, gene):
                     if overlay_graph.get_edge_data(patient, gene)['relation'] != value_mapping[value]:
                         if (patient, gene) not in edges_to_remove:

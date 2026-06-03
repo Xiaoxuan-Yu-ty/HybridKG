@@ -308,7 +308,7 @@ class PatientNetworkGenerator:
             else:
                 # Case 3: handle Gene/Protein symbols in PrimeKg
                 clean_node = node.strip().upper()
-                if attr.get('label') and attr.get('label') == 'Gene/Protein':
+                if attr.get('label') and attr.get('label') in 'Gene/Protein':
                     symbol = clean_node
 
             # Append to our list mapping if a valid symbol was resolved
@@ -680,11 +680,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # Stable Arguments
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/ppi_hc.pkl", 
+    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/old_ppi_kg.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/networks/PPI_KGs", 
+    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/retrain_oldPPIKG", 
                         help="Directory to save generated networks.")
 
     # Arguments need to change

@@ -101,14 +101,15 @@ def do_kge(
     return embedding
 
 def do_retrain(
-        edgelist: pd.DataFrame,
         design: pd.DataFrame,
         out: str,
         best_config: Dict[str, Any],
         return_patients: bool = True,
         train_size: float = 0.8,
         validation_size: float = 0.1,
-        complex_embedding: bool = False
+        complex_embedding: bool = False,
+        edgelist: Optional[pd.DataFrame]=None,
+        train_val_test_triples: Optional[Tuple[str, str, str]] = None,
 ) -> pd.DataFrame:
     """Carry out KGE on the given data.
 
@@ -123,28 +124,33 @@ def do_retrain(
     :return: Dataframe containing the embedding from the KGE
     """
     design_norm_df = design.astype(str, copy=True) # type: ignore
-
-    unique_nodes = edgelist[~edgelist['label'].isna()].drop_duplicates('source')
-
+    
     # Create a mapping of the patient to the label. The patient id is converted to string to avoid duplicates
-    label_mapping = {str(patient): label for patient, label in zip(unique_nodes['source'], unique_nodes['label'])}
+    label_mapping = design_norm_df['Target'].to_dict()
 
-    edgelist = edgelist.drop(columns='label')
+    if edgelist is not None:
+        unique_nodes = edgelist[~edgelist['label'].isna()].drop_duplicates('source')
 
-    # Split the edgelist into training, validation and testing data
-    train, validation, test = _weighted_splitter(
-        edgelist=edgelist,
-        train_size=train_size,
-        validation_size=validation_size
-    )
+        edgelist = edgelist.drop(columns='label')
 
-    train_path = os.path.join(out, 'train.edgelist')
-    validation_path = os.path.join(out, 'validation.edgelist')
-    test_path = os.path.join(out, 'test.edgelist')
+        # Split the edgelist into training, validation and testing data
+        train, validation, test = _weighted_splitter(
+            edgelist=edgelist,
+            train_size=train_size,
+            validation_size=validation_size
+        )
+        train_path = os.path.join(out, 'train.edgelist')
+        validation_path = os.path.join(out, 'validation.edgelist')
+        test_path = os.path.join(out, 'test.edgelist')
 
-    train.to_csv(train_path, sep='\t', index=False, header=False)
-    validation.to_csv(validation_path, sep='\t', index=False, header=False)
-    test.to_csv(test_path, sep='\t', index=False, header=False)
+        train.to_csv(train_path, sep='\t', index=False, header=False)
+        validation.to_csv(validation_path, sep='\t', index=False, header=False)
+        test.to_csv(test_path, sep='\t', index=False, header=False)
+    
+    elif train_val_test_triples is not None:
+        train_path, validation_path, test_path = train_val_test_triples
+    else:
+        raise ValueError('Either edgelist or train_val_test_triples must be provided')
     
     train_triples_factory = TriplesFactory.from_path(train_path, create_inverse_triples=True)
     validation_triples_factory = TriplesFactory.from_path(validation_path, create_inverse_triples=True)
