@@ -36,7 +36,7 @@ def do_kge(
     :param complex_embedding: Flag to indicate if only the real part of the embedding should be returned.
     :return: Dataframe containing the embedding from the KGE
     """
-    design_norm_df = design.astype(str, copy=True)
+    design_norm_df = design.astype(str, copy=True) # type: ignore
 
     unique_nodes = edgelist[~edgelist['label'].isna()].drop_duplicates('source')
 
@@ -122,7 +122,7 @@ def do_retrain(
     :param complex_embedding: Flag to indicate if only the real part of the embedding should be returned.
     :return: Dataframe containing the embedding from the KGE
     """
-    design_norm_df = design.astype(str, copy=True)
+    design_norm_df = design.astype(str, copy=True) # type: ignore
 
     unique_nodes = edgelist[~edgelist['label'].isna()].drop_duplicates('source')
 
