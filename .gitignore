@@ -32,3 +32,6 @@ CLEP_repeat/kge_result/train.edgelist
 CLEP_repeat/kge_result/test.edgelist
 CLEP_repeat/kge_result/validation.edgelist
 CLEP_repeat/kge_result/pykeen_results_final/sample_embeddings.csv
+CLEP_repeat/retrain_rotate
+PrimeKG_neo4j/kg_grouped_diseases.csv
+PrimeKG_neo4j/kg_grouped.csv
