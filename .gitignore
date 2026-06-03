@@ -50,3 +50,5 @@ Neo4j_KG_Containers/PrimeKG_neo4j/PrimeKG.csv
 Neo4j_KG_Containers/PrimeKG_neo4j/note4Container&Neo4j.md
 
 CLEP_repeat/clep_resources
+Neo4j_KG_Containers/PrimeKG_neo4j/kg_grouped_diseases.csv
+Neo4j_KG_Containers/PrimeKG_neo4j/kg_grouped.csv
