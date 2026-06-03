@@ -35,5 +35,18 @@ CLEP_repeat/kge_result/pykeen_results_final/sample_embeddings.csv
 CLEP_repeat/retrain_rotate
 PrimeKG_neo4j/kg_grouped_diseases.csv
 PrimeKG_neo4j/kg_grouped.csv
+PyKeen/thoughts_notes.md
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/import/edges.csv
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/import/nodes.csv
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/logs
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/ppi_hc.csv
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/hippie_current.txt
+Neo4j_KG_Containers/CLEP_PPIKG_neo4j/string_high_confidence_ppi.txt
+Neo4j_KG_Containers/PrimeKG_neo4j/import/edges.csv
+Neo4j_KG_Containers/PrimeKG_neo4j/import/nodes.csv
+Neo4j_KG_Containers/PrimeKG_neo4j/logs
+Neo4j_KG_Containers/PrimeKG_neo4j/disease_features.csv
+Neo4j_KG_Containers/PrimeKG_neo4j/PrimeKG.csv
+Neo4j_KG_Containers/PrimeKG_neo4j/note4Container&Neo4j.md
 
 CLEP_repeat/clep_resources
