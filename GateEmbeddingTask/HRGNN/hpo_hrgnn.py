@@ -29,14 +29,14 @@ from EdgeAssignmentTask.hetero_base_models.train_hybridkg import (
     build_x_dict,
     set_seed
 )
-from GateEmbeddingTask.SHGP.HRGNN_models import get_model
+from GateEmbeddingTask.HRGNN.HRGNN_models import get_model
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
     roc_auc_score,
     average_precision_score
 )
-from GateEmbeddingTask.SHGP.train_hrgnn import (
+from GateEmbeddingTask.HRGNN.train_hrgnn import (
     train_epoch,
     test,
     train,
