@@ -46,6 +46,9 @@ def parser():
 def main():
    
     args = parser()
+
+    design = pd.read_csv(args.design, index_col=0, sep='\t')
+    design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
     
     # Iterate through thresholds provided in args
     for thresh in args.threshold_list:
@@ -85,7 +88,7 @@ def main():
         print("\n--- Running KGE Retraining ---")
         embeddings = do_retrain(
             train_val_test_triples=(train_edgelist_path, val_edgelist_path, test_edgelist_path),
-            design=args.design, # Using argument passed from parser
+            design=design, # Using argument passed from parser
             out=overall_output,
             best_config=rotate_best_config,
             return_patients=True,

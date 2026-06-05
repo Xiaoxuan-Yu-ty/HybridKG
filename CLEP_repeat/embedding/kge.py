@@ -184,7 +184,7 @@ def do_retrain(
         embedding = embedding[embedding.index.isin(design_norm_df.index)]
 
         for index in embedding.index:
-            embedding.at[index, 'label'] = label_mapping[index]
+            embedding.at[index, 'label'] = int(label_mapping[index])
 
     return embedding
 
@@ -284,13 +284,18 @@ def run_pipeline(train_tf,
         inner_pipeline.pop("training", None)
         inner_pipeline.pop("testing", None)
         inner_pipeline.pop("validation", None)
+        
+        # REMOVE outdated model_kwargs
+        if "model_kwargs" in inner_pipeline:
+            inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
 
     # Execute training safely using your in-memory objects
     pipeline_results = pipeline_from_config(
         config=best_config_dict,
         training=train_tf,
         testing=test_tf,
-        validation=validation_tf
+        validation=validation_tf,
+        #automatic_memory_optimization=True
     )
 
     best_pipeline_dir = os.path.join(out_dir, 'pykeen_results_final')
