@@ -48,7 +48,7 @@ import optuna
 from sklearn.model_selection import StratifiedKFold
 
 
-def objective(trial, data, args, device):
+def objective(trial, data, args, device) -> float:
     """Optuna objective function for HPO."""
     # 1. Suggest Hyperparameters
     # Optimizer parameters
@@ -95,7 +95,7 @@ def objective(trial, data, args, device):
 
         try:
             # Train (Shortened epochs for HPO speed)
-            trained_model, _ = train(encoder, data, optimizer, epochs=int(args.epochs/2), args=args)
+            trained_model, _ = train(encoder, data, optimizer, epochs=int(args.epochs), args=args)
             
             # Evaluate
             val_metrics, _ = test(trained_model, data, 'val_mask')
@@ -114,7 +114,7 @@ def objective(trial, data, args, device):
             gc.collect()           # Python garbage collection
             torch.cuda.empty_cache() # Clear GPU cache
 
-    return np.mean(fold_f1s)
+    return float(np.mean(fold_f1s))
 
 def final_CVEvaluation(new_data, study, args, device):
     # 3. Final Evaluation with Cross-Validation using Best Params

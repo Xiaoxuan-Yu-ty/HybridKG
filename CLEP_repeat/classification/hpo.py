@@ -106,7 +106,13 @@ def hpo_cross_validate(
 
         # TODO: Add support for multiple metrics
         best_trial = max(study.best_trials, key=lambda trial: trial.values[0])
-        cv_results = run_final_classification(x_train, y_train, x_test, y_test, metrics, best_trial.params, 'RandomForest')
+        cv_results = run_final_classification(x_train=x_train, 
+                                              y_train=y_train, 
+                                              x_test=x_test, 
+                                              y_test=y_test, 
+                                              metrics=metrics, 
+                                              best_params=best_trial.params, 
+                                              classifier=classifier)
         # cv_results['best_params'] = best_trial.params
         
         outer_cv_results[run_num] = cv_results

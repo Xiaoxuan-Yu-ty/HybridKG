@@ -132,10 +132,17 @@ def run_optuna_optimization(study: Study, n_trials: int, objective: OptunaObject
     study.optimize(cast(Callable[[Trial], float], objective), n_trials=n_trials, show_progress_bar=True)
 
 
-def run_final_classification(x_train, y_train, x_test, y_test, metrics, best_params, classifier):
+def run_final_classification(x_train, 
+                             y_train, 
+                             x_test, 
+                             y_test, 
+                             metrics, 
+                             best_params, 
+                             classifier):
     # classifier = best_params.pop('classifier')
     cv_results = defaultdict(list)
-    clf = _get_classifier(classifier)
+    clf = _get_classifier(model_name=classifier,
+                                                          best_params=best_params)
 
     n_classes = len(np.unique(y_train))
 
