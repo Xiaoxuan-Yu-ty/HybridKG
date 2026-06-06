@@ -110,7 +110,7 @@ def overlay_samples(
     data_copy = data.drop(columns='label')
     values_data = data_copy.values
 
-    summary_data = pd.DataFrame(0, index=data_copy.index, columns=["positive_relation", "negative_relation", 'linked_genes'])
+    summary_data = pd.DataFrame(0, index=data_copy.index, columns=["positive_relation", "negative_relation"])
     summary_data['linked_nodes'] = [[] for _ in range(len(summary_data))] # Initialize with empty lists
     summary_data['label'] = data['label'].to_list()
     
@@ -142,8 +142,8 @@ def overlay_samples(
                 overlay_graph.add_edge(patient, gene, relation=value_mapping[value],
                                        label=patient_label_mapping[patient])
             #if summary:
-                summary_data.at[patient, VALUE_TO_COLNAME[value]] += 1
-                summary_data.at[patient, 'linked_nodes'].append(gene)
+                summary_data.at[patient, VALUE_TO_COLNAME[value]] += 1 # here ignores the genes in edges_to_remove
+                summary_data.at[patient, 'linked_nodes'].append(gene) # so not accurate
             
     # Remove patient-gene triples that have conflicting duplicates in the data
     for patient, gene in edges_to_remove:
