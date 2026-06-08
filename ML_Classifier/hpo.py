@@ -13,7 +13,14 @@ from tqdm import tqdm
 
 from .utils import (OptunaObjective, init_db, run_final_classification,
                     run_optuna_optimization, save_json)
-from ..constants import MODEL_NAME_MAPPING
+
+MODEL_NAME_MAPPING = {
+    'logistic_regression': 'LogisticRegression',
+    'elastic_net': 'ElasticNet',
+    'svm': 'SVM',
+    'random_forest': 'RandomForest',
+    'gradient_boost': 'GradientBoosting',
+}
 
 
 def hpo_cross_validate(
