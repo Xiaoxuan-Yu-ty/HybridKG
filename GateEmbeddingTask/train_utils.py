@@ -262,6 +262,7 @@ def to_device_edge_index_dict(
 
 def evaluate_link(
                     model,
+                    x_dict,
                     train_edge_index_dict: Dict[Tuple[str, str, str], torch.Tensor],
                     eval_edge_index_dict: Dict[Tuple[str, str, str], torch.Tensor],
                     num_nodes_dict: Dict[str, int],
@@ -274,7 +275,7 @@ def evaluate_link(
     model.eval()
     with torch.no_grad():
         edge_index_dict_device = to_device_edge_index_dict(train_edge_index_dict, device)
-        x_dict = model.encode(edge_index_dict_device)
+        x_dict = model(x_dict, edge_index_dict_device)
 
     total_hits = 0
     total_count = 0

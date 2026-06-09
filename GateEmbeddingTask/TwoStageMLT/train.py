@@ -172,9 +172,11 @@ def train_epoch(model:TwoStageModel,
     model.train()
     optimizer.zero_grad()
 
-    h_dict, h_patient,_ = model(x_dict=data.x_dict, 
-                                        static_edge_index_dict = data.static_edge_index_dict,
-                                        dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+    h_dict = model(x_dict=data.x_dict, 
+                        static_edge_index_dict = data.static_edge_index_dict,
+                        )
+    h_final, h_patient,_ = model.aggregate(h_dict=h_dict, dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+    
     mask = data['Patient'].train_mask
 
     # link prediction loss
@@ -208,11 +210,11 @@ def train_epoch(model:TwoStageModel,
 def evaluate_cls(model, data, mask_name):
     model.eval()
     # Ensure model's forward pass returns the attention weights
-    h_dict, h_patient, attention_weights = model(
-        x_dict=data.x_dict, 
-        static_edge_index_dict=data.static_edge_index_dict,
-        dynamic_edge_index_dict=data.dynamic_edge_index_dict
-    )
+    h_dict = model(x_dict=data.x_dict, 
+                        static_edge_index_dict = data.static_edge_index_dict,
+                        )
+    h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+    
    
     mask = data['Patient'][mask_name] 
     y_true = data['Patient'].y[mask].cpu().numpy()
@@ -282,6 +284,7 @@ def train(model,
         # Evaluate Link on sampled edges (HPO) or all edges (Final)
         val_hits = evaluate_link(
             model=model, 
+            x_dict=data.x_dict,
             train_edge_index_dict=data.static_edge_index_dict,
             eval_edge_index_dict=eval_edge_index_dict,
             num_nodes_dict=data.num_nodes_dict,
@@ -388,6 +391,7 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
             val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
             val_hits = evaluate_link(
                                             model=model, 
+                                            x_dict=data.x_dict,
                                             train_edge_index_dict=data.static_edge_index_dict,
                                             eval_edge_index_dict=eval_edge_index_dict,
                                             num_nodes_dict=data.num_nodes_dict,
@@ -522,8 +526,8 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=50, help="Number of trials for HPO process.")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--negative_sampling_ratio", type=float, default=0.1)

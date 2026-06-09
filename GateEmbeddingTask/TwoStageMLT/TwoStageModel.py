@@ -101,15 +101,20 @@ class TwoStageModel(torch.nn.Module):
         
         self.classifier = nn.Linear(out_channels, num_classes)
 
-    def forward(self, x_dict, static_edge_index_dict, dynamic_edge_index_dict):
+    def forward(self, x_dict, static_edge_index_dict):
     
         h_dict, _= self.encoder(x_dict, static_edge_index_dict)
 
+        
+        return h_dict
+    
+    def aggregate(self, h_dict, dynamic_edge_index_dict):
+        
         h_final, attention_weights = self.aggregator(h_dict, dynamic_edge_index_dict)
         h_patient = self.classifier(h_final['Patient'])
         
-        return h_dict, h_patient, attention_weights
-
+        return h_final, h_patient, attention_weights
+    
     def decode(self, h_dict, edge_type, edge_index):
         # Used for Link Prediction loss
         return self.decoder(h_dict, edge_type, edge_index)
