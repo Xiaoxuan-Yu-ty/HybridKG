@@ -17,8 +17,8 @@ try:
 except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
-from GateEmbeddingTask.HRGNN.HRGCNConv import HRGCNLayer
-from GateEmbeddingTask.HRGNN.HRGATConv import HRGATLayer
+from HRGNN.HRGCNConv import HRGCNLayer
+from HRGNN.HRGATConv import HRGATLayer
 
 
 class BaseHeteroEncoder(torch.nn.Module):
@@ -48,15 +48,15 @@ class BaseHeteroEncoder(torch.nn.Module):
     
     def get_initial_x_dict(self, x_dict):
         """Standardizes input before GNN layers."""
-        # new_x_dict = {}
-        # for node_type in self.embeddings.keys(): # Handles nodes without x
-        #     new_x_dict[node_type] = self.embeddings[node_type].weight
+        new_x_dict = {}
+        for node_type in self.embeddings.keys(): # Handles nodes without x
+            new_x_dict[node_type] = self.embeddings[node_type].weight
         # for node_type in self.input_lins.keys(): # Handles nodes with x
         #     new_x_dict[node_type] = self.input_lins[node_type](x_dict[node_type])
         
         # Apply activation and dropout
         return {nt: F.dropout(F.elu(x), p=self.dropout_rate, training=self.training) 
-                for nt, x in x_dict.items()}
+                for nt, x in new_x_dict.items()}
 
 
 class HRGATEncoder(BaseHeteroEncoder):
@@ -66,8 +66,9 @@ class HRGATEncoder(BaseHeteroEncoder):
                  num_layers, 
                  dropout_rate, 
                  att_channels=32,
-                 negative_slop=0.2):
+                 negative_slope=0.2):
         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+        
         self.layers = nn.ModuleList([
             HRGATLayer(
                 metadata=(data.node_types, data.edge_types),
@@ -75,12 +76,13 @@ class HRGATEncoder(BaseHeteroEncoder):
                 out_dim=hidden_channels if i < num_layers - 1 else out_channels,
                 att_dim=att_channels,
                 dropout=dropout_rate,
-                negative_slope=negative_slop,
+                negative_slope=negative_slope,
             ) for i in range(num_layers)
         ])
 
     def forward(self, x_dict, edge_index_dict):
         x_dict = self.get_initial_x_dict(x_dict)
+        
         attention_weights = []
         for layer in self.layers:
             out_dict, att_dict = layer(x_dict, edge_index_dict)
@@ -359,7 +361,7 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                             att_channels=att_channels, 
                             num_layers=num_layers, 
                             dropout_rate=dropout,
-                            negative_slop=negative_slop)
+                            negative_slope=negative_slop)
     
     elif enc_type == 'hrgcn':
         # Assuming you've implemented HRGCN following the HRGAT structure

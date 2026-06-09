@@ -24,7 +24,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 
-from GateEmbeddingTask.train_utils import (
+from train_utils import (
     compute_link_loss, 
     evaluate_link,
     build_data_dict,
@@ -32,7 +32,7 @@ from GateEmbeddingTask.train_utils import (
     convert_to_hetero_data,
     get_device
 )
-from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+from TwoStageMLT.TwoStageModel import get_model, TwoStageModel
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -221,10 +221,15 @@ def evaluate_cls(model, data, mask_name):
     pred = logits.argmax(dim=-1).cpu().numpy()
     prob = torch.softmax(logits, dim=-1)[:, 1].cpu().numpy()
 
+    try:
+        auroc = float(roc_auc_score(y_true, prob))
+    except ValueError:
+        auroc = float("nan")
+        
     metrics = {
         'Accuracy': float(accuracy_score(y_true, pred)), 
         'F1_score': float(f1_score(y_true, pred)), 
-        'AUROC': float(roc_auc_score(y_true, prob)), 
+        'AUROC': auroc, 
         'AUPRC': float(average_precision_score(y_true, prob))
     }
     
@@ -241,7 +246,7 @@ def sample_edges(edge_index_dict, sample_ratio=0.1):
     sampled_dict = {}
     for etype, edge_index in edge_index_dict.items():
         num_edges = edge_index.size(1)
-        num_samples = int(num_edges * sample_ratio)
+        num_samples = num_samples = max(1, int(num_edges * sample_ratio))
         perm = torch.randperm(num_edges)[:num_samples]
         sampled_dict[etype] = edge_index[:, perm]
     return sampled_dict
@@ -254,6 +259,7 @@ def train(model,
           negative_sampling_ratio, 
           num_negatives, 
           pos_sample_cap,
+          lambda_end,
           args, 
           is_hpo=True,
           is_multi_metrics=True):
@@ -266,7 +272,7 @@ def train(model,
     eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1) if is_hpo else data.static_edge_index_dict
 
     for epoch in tqdm(range(epochs), desc="Training Model"):
-        current_lambda_link = compute_scheduled_value(epoch, epochs, args.lambda_att_start, args.lambda_att_end, args.schedule_type)
+        current_lambda_link = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
         
         losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_link)
         
@@ -300,7 +306,8 @@ def train(model,
 
         if score > best_composite:
             best_composite = score
-            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            best_state = {k: v.detach().cpu().clone()
+                            for k,v in model.state_dict().items()}
             
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -317,13 +324,13 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     
     # Model parameters
     hidden_channels = trial.suggest_categorical("hidden_channels", [64, 128, 256])
-    out_channels = trial.suggest_categorical("hidden_channels", [32, 64, 128])
+    out_channels = trial.suggest_categorical("out_channels", [32, 64, 128])
     att_channels = trial.suggest_categorical("att_channels", [16,32,64])
     num_layers = trial.suggest_categorical("num_layers",[2, 3, 4])
-    lambda_link_end = trial.suggest_float("lambda_att_end", 0.1, 1.0)
+    lambda_end = trial.suggest_float("lambda_end", 0.1, 1.0)
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
     heads = trial.suggest_categorical("heads",[2,3,4])
-    negative_slop = trial.suggest_float("negative_slop", 0.1, 0.5)
+    negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
     aggr = trial.suggest_categorical("aggr", ['sum','mean','min','max','cat'])
     
     # Link prediction parameters
@@ -334,7 +341,7 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     # 2. Setup K-Fold
     num_patients = data['Patient'].x.size(0)
     y_all = data['Patient'].y.cpu().numpy()
-    num_classes = max(y_all) + 1
+    num_classes = int(y_all.max()) + 1
     skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
     
     fold_composites = []
@@ -364,7 +371,7 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
                     dropout=dropout,
                     heads=heads,
                     aggr=aggr,
-                    negative_slop=negative_slop,
+                    negative_slope=negative_slope,
                     num_classes=num_classes,
                     device=device)
         
@@ -375,7 +382,7 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
             trained_model, _, best_composite = train(
                 model=model, data=data, optimizer=optimizer, epochs=int(args.epochs),
                 negative_sampling_ratio=negative_sampling_ratio, num_negatives=num_negatives,
-                pos_sample_cap=pos_sample_cap, args=args, device=device, is_hpo=True, is_multi_metrics=is_multi_metrics
+                pos_sample_cap=pos_sample_cap, lambda_end=lambda_end,args=args, device=device, is_hpo=True, is_multi_metrics=is_multi_metrics
             )
             
             val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
@@ -446,7 +453,7 @@ def hpo_cross_validate(data, best_params, args, device):
             dropout=best_params['dropout'],
             heads=best_params.get('heads', 2), 
             aggr=best_params.get('aggr', 'sum'),
-            negative_slop=best_params.get('negative_slop', 0.2), 
+            negative_slope=best_params.get('negative_slope', 0.2), 
             num_classes=num_classes, 
             device=device
         )
@@ -459,8 +466,8 @@ def hpo_cross_validate(data, best_params, args, device):
         trained_model, history, _ = train(
             model=model, data=data, optimizer=optimizer, epochs=int(args.epochs), 
             args=args, negative_sampling_ratio=best_params['negative_sampling_ratio'],
-            num_negatives=best_params['num_negatives'], pos_sample_cap=best_params['pos_sample_cap'],
-            device=device, is_hpo=False
+            num_negatives=best_params['num_negatives'], pos_sample_cap=best_params['pos_sample_cap'],lambda_end=best_params["lambda_end"],
+            device=device, is_hpo=False, is_multi_metrics=False
         )
         
         # Test on Fold and grab attention weights
@@ -490,16 +497,21 @@ def parse():
     parser = argparse.ArgumentParser(description="Two Stage Multi-Task-Learning Model HPO & Training Pipeline")
 
     # Paths
-    parser.add_argument("--graph_path", type=str, default="../datasets/Patient_KGs/G_geo_dual_hybrid_ecdf.pkl")
+    parser.add_argument("--graph_path", type=str, default="../../datasets/AD_KGs/G_adni_merge_ecdf.pkl")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="../results/HRGNN")
-    parser.add_argument('--dataset', type=str, default='geo', choices=['adni', 'geo'])
+    parser.add_argument("--output_dir", type=str, default="./results")
+    parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
-    parser.add_argument('--model', type=str, default='gat', choices=['gat', 'gcn'])
     parser.add_argument("--method", type=str, default="dual_hybrid", choices=['dual_hybrid','merge'], 
                         help="Network construction strategy.")
-    
+    parser.add_argument("--encoder_type", type=str, default='hrgat', 
+                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
+    parser.add_argument("--aggregator_type", type=str, default='hrgat',
+                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
+    parser.add_argument("--decoder_type", type=str, default='distmult',
+                        choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
+                        help='KGE model style link prediction scoring function to choose.')
 
     # Model parameters
     parser.add_argument("--hidden_channels", type=int, default=128)
@@ -508,15 +520,9 @@ def parse():
     parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--negative_slop", type=float, default=0.2)
-    parser.add_argument("--encoder_type", type=str, default='hrgat', 
-                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--aggregator_type", type=str, default='hrgat',
-                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--decoder_type", type=str, default='distmult',
-                        choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
-                        help='KGE model style link prediction scoring function to choose.')
     
     # General Optimizer Settings
+    parser.add_argument("--num_trial", type=int, default=50, help="Number of trials for HPO process.")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -527,10 +533,8 @@ def parse():
     # Dynamic Scheduling Settings
     parser.add_argument("--schedule_type", type=str, default="linear", choices=["constant", "linear", "cosine"],
                         help="The type of scheduling function to apply across the epochs.")
-    parser.add_argument("--lambda_att_start", type=float, default=0.1, 
-                        help="Initial attention loss weight at epoch 0.")
-    parser.add_argument("--lambda_att_end", type=float, default=0.8, 
-                        help="Final attention weight at final epoch.")
+    parser.add_argument("--lambda_start", type=float, default=0.1)
+    parser.add_argument("--lambda_end", type=float, default=1.0)
 
     # Edge split ratios
     parser.add_argument("--val_ratio", type=float, default=0.1)
@@ -563,11 +567,15 @@ def main():
 
     # 2. HPO (Optuna)
     print("\n--- Starting Optuna HPO ---")
-    study = optuna.create_study(direction="maximize", study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
+    study = optuna.create_study(
+        storage=f"sqlite:///{final_output_dir}/optuna.db",
+        load_if_exists=True,
+        direction="maximize", 
+        study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
     
     # Wrap objective to pass data, args, device
     objective_func = lambda trial: objective(trial, data, args, device, is_multi_metrics=False)
-    study.optimize(objective_func, n_trials=args.num_trail)
+    study.optimize(objective_func, n_trials=args.num_trial)
     
     print("\nBest Trial Composite Score:", study.best_value)
     print("Best Params:", study.best_params)

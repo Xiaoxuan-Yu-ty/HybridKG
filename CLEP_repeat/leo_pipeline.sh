@@ -24,7 +24,7 @@ module load CUDA
 export CUDA_VISIBLE_DEVICES=0,1
 export CUDA_LAUNCH_BLOCKING=1
 
-KGE_MODEL=("CompGCN" "ComplEX" "HolE" "TransE" "TransR")
+KGE_MODEL=("TransE" "TransR" "ComplEX" "HolE" "CompGCN")
 
 echo "====================================================================================================="
 echo "Running Testing import script"

@@ -65,17 +65,16 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
     data['Patient'].test_mask = torch.tensor([G.nodes[pid]['test_mask'] for pid in p_ids], dtype=torch.bool)
 
     # 3. Process ALL Node Types (Initialize x for all types)
-    # for n_type, mapping in node_mappings.items():
-    #     if n_type == 'Patient':
-    #         continue  # Already handled above
+    for n_type, mapping in node_mappings.items():
+        if n_type == 'Patient':
+            continue  # Already handled above
             
-    #     num_nodes = len(mapping)
-    #     data[n_type].num_nodes = num_nodes
+        num_nodes = len(mapping)
+        data[n_type].num_nodes = num_nodes
         
-    #     # Initialize features to match Patient feature dimension: use torch.zeros or torch.randn. 
-    #     data[n_type].x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
-        
-        #print(f"Initialized {n_type} nodes: {num_nodes} nodes with feature dim {feature_dim}")
+        # Initialize features to match Patient feature dimension: use torch.zeros or torch.randn. 
+        data[n_type].x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
+        print(f"Initialized {n_type} nodes: {num_nodes} nodes with feature dim {feature_dim}")
 
     # 4. Process Edges with separation
     static_edges = {}
@@ -139,7 +138,7 @@ def build_data_dict(data):
     data.num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}
     data.static_edge_index_dict = {etype: data[etype].edge_index for etype in data.static_edge_types}
     data.dynamic_edge_index_dict = {etype: data[etype].edge_index for etype in data.dynamic_edge_types}
-    data.edge_type_dict = {**data.static_edge_index_dict, **data.dynamic_edge_index_dict}
+    data.edge_index_dict = {**data.static_edge_index_dict, **data.dynamic_edge_index_dict}
     
     return data
 

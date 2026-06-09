@@ -144,8 +144,11 @@ class HRGATLayer(nn.Module):
 
             src_type, edge_type, dst_type = rel
             rel_key = self.rel_to_key(rel)
+            
+            if rel not in edge_index_dict:
+                continue  # Skip message passing for this relation if no edges are provided
             edge_index = edge_index_dict[rel]
-
+            
             out = self.relation_message_passing(
                 x_src=x_dict[src_type],
                 x_dst=x_dict[dst_type],

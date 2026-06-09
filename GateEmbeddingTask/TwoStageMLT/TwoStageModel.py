@@ -13,7 +13,7 @@ try:
 except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
-from GateEmbeddingTask.encoders import get_encoder
+from encoders import get_encoder
 
 
 class LinkDecoder(nn.Module):
@@ -105,7 +105,7 @@ class TwoStageModel(torch.nn.Module):
     
         h_dict, _= self.encoder(x_dict, static_edge_index_dict)
 
-        h_final, attention_weights = self.aggregator(x_dict, dynamic_edge_index_dict)
+        h_final, attention_weights = self.aggregator(h_dict, dynamic_edge_index_dict)
         h_patient = self.classifier(h_final['Patient'])
         
         return h_dict, h_patient, attention_weights
@@ -127,7 +127,7 @@ def get_model(
     dropout: float,
     heads:int, 
     aggr:str,
-    negative_slop:float,
+    negative_slope:float,
     num_classes: int,
     device
 ):
@@ -156,7 +156,7 @@ def get_model(
                                                                         num_layers=num_layers, 
                                                                         dropout=dropout,
                                                                         aggr=aggr,
-                                                                        negative_slop=negative_slop,
+                                                                        negative_slop=negative_slope,
                                                                         heads=heads
                                                                         )
     
@@ -168,7 +168,7 @@ def get_model(
                                                                         num_layers=num_layers, 
                                                                         dropout=dropout,
                                                                         aggr=aggr,
-                                                                        negative_slop=negative_slop,
+                                                                        negative_slop=negative_slope,
                                                                         heads=heads
                                                                         )
     

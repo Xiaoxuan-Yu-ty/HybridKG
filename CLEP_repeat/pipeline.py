@@ -213,7 +213,7 @@ def main():
         'all': do_average
     }
     # Execute
-    for threshold in [1.5, 2.5, 5, 10, 20]:
+    for threshold in [1,1.5, 2.5, 5, 10, 20]:
         print(f"\nRunning Sample Scoring {args.scoring_type} with threshold {threshold}...")
         overall_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}')
 
@@ -283,7 +283,7 @@ def main():
         if args.kge_hpo:
             embeddings = do_kge(edgelist=graph_df,
                                 design=design,
-                                out=overall_output,
+                                out=kge_output,
                                 model_config=hpo_config_dict,
                                 return_patients=True,
                                 train_size=0.8, validation_size=0.1,
@@ -291,12 +291,12 @@ def main():
         else:
             embeddings = do_retrain(edgelist=graph_df,
                                 design=design,
-                                out=overall_output,
+                                out=kge_output,
                                 best_config=rotate_best_config,
                                 return_patients=True,
                                 train_size=0.8, validation_size=0.1,
                                 complex_embedding=False)
-        embeddings.to_csv(os.path.join(overall_output,'embedding.csv'))
+        embeddings.to_csv(os.path.join(kge_output,'embedding.csv'))
 
         # 4. do classification
         print("\n-------------Run Classification HPO---------------------------------------------")
