@@ -589,6 +589,7 @@ def main():
         json.dump(study.best_params, f, indent=4)
 
     # 3. Retrain with best hyperparameters (Cross Validation)
+    print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
     final_results, attention_archive = hpo_cross_validate(data, study.best_params, args, device)
 
     # Calculate Average Final Metrics
