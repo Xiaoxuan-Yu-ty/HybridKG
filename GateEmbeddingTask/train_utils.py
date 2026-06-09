@@ -74,7 +74,7 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
         
         # Initialize features to match Patient feature dimension: use torch.zeros or torch.randn. 
         data[n_type].x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
-        print(f"Initialized {n_type} nodes: {num_nodes} nodes with feature dim {feature_dim}")
+        #print(f"Initialized {n_type} nodes: {num_nodes} nodes with feature dim {feature_dim}")
 
     # 4. Process Edges with separation
     static_edges = {}
