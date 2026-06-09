@@ -227,6 +227,7 @@ class HRGAT(nn.Module):
         att_channels=32,
         dropout=0.5,
         num_layers=2,
+        negative_slop=0.2
     ):
         super().__init__()
 
@@ -267,6 +268,7 @@ class HRGAT(nn.Module):
                     out_dim=hidden_channels,
                     att_dim=att_channels,
                     dropout=dropout,
+                    negative_slope=negative_slop,
                 )
             )
 

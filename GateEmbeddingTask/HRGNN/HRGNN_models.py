@@ -12,8 +12,8 @@ try:
 except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
-from GateEmbeddingTask.SHGP.HRGCNConv import HRGCNLayer
-from GateEmbeddingTask.SHGP.HRGATConv import HRGATLayer
+from GateEmbeddingTask.HRGNN.HRGCNConv import HRGCNLayer
+from GateEmbeddingTask.HRGNN.HRGATConv import HRGATLayer
 
 
 class HRGCN(nn.Module):

@@ -245,7 +245,7 @@ def train_one_epoch(
     return {
         "loss": loss.item(),
         "cls_loss": cls_loss.item(),
-        "link_loss": link_loss.item() 
+        "link_loss": link_loss.item()  # type: ignore
     }
 
 def train(
