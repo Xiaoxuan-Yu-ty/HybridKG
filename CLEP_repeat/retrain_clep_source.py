@@ -32,8 +32,8 @@ def parser():
                         help="Path to design file.")
     parser.add_argument("--kge_hpo", action="store_true", help="Enable KGE HPO Process (if false, will retrain with best_config).")
     
-    parser.add_argument("--cls_model", type=str, default='elastic_net', 
-                        choices=['logistic_regression', 'elastic_net', 'svm', 'random_forest', 'gradient_boost'])
+    parser.add_argument("--cls_model", type=str, nargs="+", #default='elastic_net', 
+                        default=['logistic_regression', 'elastic_net', 'svm', 'random_forest', 'gradient_boost'])
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel HPO jobs.")
     parser.add_argument("--num_trials", type=int, default=100, help="Number of HPO trials.")
     
@@ -107,21 +107,22 @@ def main():
 
         # 7. Execute Classification
         print(f"\n--- Running Classification HPO with Embeeding Path {embedding_path}---")
-        db_url = f"sqlite:///{os.path.join(overall_output, 'optuna_study.db')}"
-        cls_output = os.path.join(overall_output, 'cls_result')
-        os.makedirs(cls_output, exist_ok=True)
-        
-        cv_results = do_classification(
-            data=embeddings,
-            model_name=args.cls_model,
-            out_dir=cls_output,
-            validation_cv=5,
-            scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
-            rand_labels=False,
-            mysql_url=db_url,
-            num_processes=args.n_jobs,
-            num_trials=args.num_trials
-        )
+        for model_name in args.cls_model:
+            db_url = f"sqlite:///{os.path.join(overall_output, 'optuna_study.db')}"
+            cls_output = os.path.join(overall_output, 'cls_result', model_name)
+            os.makedirs(cls_output, exist_ok=True)
+            print(f"\n--- Running Classification HPO with model {model_name}---")
+            cv_results = do_classification(
+                data=embeddings,
+                model_name=model_name,
+                out_dir=cls_output,
+                validation_cv=5,
+                scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
+                rand_labels=False,
+                mysql_url=db_url,
+                num_processes=args.n_jobs,
+                num_trials=args.num_trials
+            )
         
     print("\nAll pipeline tasks successfully processed!")
 

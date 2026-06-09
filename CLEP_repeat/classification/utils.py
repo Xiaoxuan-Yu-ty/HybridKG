@@ -163,33 +163,54 @@ def init_db(db_url, db_name='optuna'):
     connection.execute(sqlalchemy.text(f'CREATE DATABASE IF NOT EXISTS {db_name}'))
     connection.close()
 
+def make_serializable(obj):
+    """Recursively convert numpy types and sklearn estimators to JSON-safe formats."""
+    if isinstance(obj, (np.ndarray, list)):
+        return [make_serializable(x) for x in obj]
+    elif isinstance(obj, dict):
+        return {k: make_serializable(v) for k,v in obj.items()}
+    elif isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    elif hasattr(obj, 'get_params'):
+        # Handle estimators
+        params = obj.get_params()
+        return {k: make_serializable(v) for k, v in params.items()}
+    return obj
 
-def save_json(results: Dict[str, Any], out_dir: str) -> None:
+def save_json(results: dict, out_dir: str) -> None:
     """Save the cross validation results as a json file."""
-    for key in results.keys():
-        # Check if the result is a numpy array, if yes convert to list
-        if isinstance(results[key], np.ndarray):
-            results[key] = results[key].tolist()
-
-        # Check if the results are numpy float values, if yes skip it
-        elif isinstance(results[key][0], np.floating):
-            continue
-
-        elif isinstance(results[key][0], list):
-            continue
-
-        # Check if the key is an estimator and convert it into a JSON Serializable object.
-        # Also Check if it an estimator wrapper like OneVsRest classifier.
-        else:
-            results[key] = [
-                classifier.get_params()
-                if 'estimator' not in classifier.get_params()
-                else classifier.get_params()['estimator'].get_params()
-                for classifier in results[key]
-            ]
-
+    # Process the dictionary safely
+    serializable_results = make_serializable(results)
+    
     with open(f'{out_dir}/cross_validation_results.json', 'w') as out:
-        json.dump(results, out, indent=4)
+        json.dump(serializable_results, out, indent=4)
+
+# def save_json(results: Dict[str, Any], out_dir: str) -> None:
+#     """Save the cross validation results as a json file."""
+#     for key in results.keys():
+#         # Check if the result is a numpy array, if yes convert to list
+#         if isinstance(results[key], np.ndarray):
+#             results[key] = results[key].tolist()
+
+#         # Check if the results are numpy float values, if yes skip it
+#         elif isinstance(results[key][0], np.floating):
+#             continue
+
+#         elif isinstance(results[key][0], list):
+#             continue
+
+#         # Check if the key is an estimator and convert it into a JSON Serializable object.
+#         # Also Check if it an estimator wrapper like OneVsRest classifier.
+#         else:
+#             results[key] = [
+#                 classifier.get_params()
+#                 if 'estimator' not in classifier.get_params()
+#                 else classifier.get_params()['estimator'].get_params()
+#                 for classifier in results[key]
+#             ]
+
+#     with open(f'{out_dir}/cross_validation_results.json', 'w') as out:
+#         json.dump(results, out, indent=4)
 
 
 def _do_multiclass_classification(

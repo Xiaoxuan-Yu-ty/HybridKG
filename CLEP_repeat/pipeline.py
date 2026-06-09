@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -14,77 +15,96 @@ from CLEP_repeat.embedding.kge import do_kge, do_retrain
 from CLEP_repeat.classification.hpo import *
 
 hpo_config = {
-    # 1. Wrap all model and training specs into the "pipeline" key
-    "pipeline": {
+    "optuna":{},
+    "pipeline":{
         "model": "RotatE",
-        "training_loop": "sLCWA",
-        
-        "model_kwargs": {
-            "embedding_dim": 128,  
-        },
-        
-        "loss": "NSSALoss",
-        "loss_kwargs_ranges": {
-            "margin": {
-                "type": "float",
-                "low": 15.0,
-                "high": 30.0,
-                "scale": "linear"
-            },
-            "adversarial_temperature": {
-                "type": "float",
-                "low": 0.5,
-                "high": 1.5,
-                "scale": "linear"
-            }
-        },
-
-        "negative_sampler": "basic",
-        "negative_sampler_kwargs_ranges": {
-            "num_negs_per_pos": {
+        "model_kwargs_ranges": {
+            "embedding_dim": {
                 "type": "int",
-                "low": 10,
-                "high": 30,
-                "step": 2
+                "low": 6,
+                "high": 9,
+                "scale": "power_two"
             }
         },
-
-        "optimizer": "Adam",
+        "training_loop": "slcwa",
+        "training_loop_kwargs": {
+        },
+        "optimizer": "adam",
+        "optimizer_kwargs": {
+            "weight_decay": 0.0
+        },
         "optimizer_kwargs_ranges": {
             "lr": {
                 "type": "float",
                 "low": 0.0001,
-                "high": 0.01,
+                "high": 1.0,
                 "scale": "log"
             }
         },
-
-        "training_kwargs": {
-            "num_epochs": 200,
-        },
-        "training_kwargs_ranges": {
-            "batch_size": {
-                "type": "categorical",
-                "choices": [512, 1024, 2048]
+        "loss": "NSSALoss",
+        "loss_kwargs": {},
+        "loss_kwargs_ranges": {
+            "margin": {
+                "type": "float",
+                "low": 1,
+                "high": 30,
+                "q": 2.0
+            },
+            "adversarial_temperature": {
+                "type": "float",
+                "low": 0.1,
+                "high": 1.0,
+                "q": 0.1
             }
         },
-
+        "regularizer": "NoRegularizer",
+        "regularizer_kwargs": {},
+        "regularizer_kwargs_ranges": {},
+        "negative_sampler": "BasicNegativeSampler",
+        "negative_sampler_kwargs": {},
+        "negative_sampler_kwargs_ranges": {
+            "num_negs_per_pos": {
+                "type": "int",
+                "low": 1,
+                "high": 50,
+                "q": 1
+            }
+        },
         "evaluator": "RankBasedEvaluator",
         "evaluator_kwargs": {
             "filtered": True
         },
         "evaluation_kwargs": {
-            "batch_size": 1024
-        }
-    },
-    
-    "optuna": {
-        "n_trials": 100,       # Number of parameter combinations to try
-        "timeout": 7200,      # Optional: Max time in seconds (1 hour)
-        "metric": "hits_at_10", # What metric to maximize (defaults to mean_reciprocal_rank if left out)
-        "direction": "maximize" 
+            "batch_size": None
+        },
+        "training_kwargs": {
+            "num_epochs": 1000,
+            "label_smoothing": 0.0
+        },
+        "training_kwargs_ranges": {
+            "batch_size": {
+                "type": "int",
+                "low": 6,
+                "high": 11,
+                "scale": "power_two"
+            }
+        },
+        "stopper": "early",
+        "stopper_kwargs": {
+            "frequency": 25,
+            "patience": 4,
+            "relative_delta": 0.002
+        },
+        "n_trials": 100,
+        "timeout": 129600,
+        "metric": "hits@10",
+        "direction": "maximize",
+        "sampler": "random",
+        "pruner": "nop"
     }
 }
+
+
 
 rotate_best_config= {
   "metadata": {
@@ -135,11 +155,11 @@ def parser():
 
     # graph generator args
     parser.add_argument("--DiseaseKG", type=str, default='PPI_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/ppi_hc.pkl", 
+    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/oldcleaned_ppi_kg.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/networks/PPI_KGs", 
+    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/networks/PPI_KGs", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
@@ -161,9 +181,10 @@ def parser():
                         help="Network construction strategy.")
     # KGE arguments
     parser.add_argument("--kge_hpo", action="store_true", help="Enable KGE HPO Process.")
+    parser.add_argument("--kge_model", type=str, default="RotatE")
     # CLS arguments
-    parser.add_argument("--cls_model", type=str, default='logistic_regression', 
-                        choices=['logistic_regression',
+    parser.add_argument("--cls_model", type=str, nargs="+",#default='logistic_regression', 
+                            default=['logistic_regression',
                                 'elastic_net',
                                 'svm',
                                 'random_forest',
@@ -239,11 +260,31 @@ def main():
 
         print("\n-------------Do KGE---------------------------------------------")
 
+        hpo_config_path = f"../PyKeen/configs/{args.kge_model}_model_config.json"
+        with open(hpo_config_path, 'r') as f:
+            hpo_config_dict = json.load(f)
+
+        assert hpo_config_dict is not None
+
+        # Remove ALL structural keys causing duplicates or path errors
+        if "pipeline" in hpo_config_dict:
+            inner_pipeline = hpo_config_dict["pipeline"]
+            inner_pipeline.pop("dataset", None)
+            inner_pipeline.pop("training", None)
+            inner_pipeline.pop("testing", None)
+            inner_pipeline.pop("validation", None)
+            
+            # REMOVE outdated model_kwargs
+            if "model_kwargs" in inner_pipeline:
+                inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
+
+        kge_output = os.path.join(overall_output, args.kge_model)
+        os.makedirs(kge_output, exist_ok=True)
         if args.kge_hpo:
             embeddings = do_kge(edgelist=graph_df,
                                 design=design,
                                 out=overall_output,
-                                model_config=hpo_config,
+                                model_config=hpo_config_dict,
                                 return_patients=True,
                                 train_size=0.8, validation_size=0.1,
                                 complex_embedding=False)
@@ -259,18 +300,23 @@ def main():
 
         # 4. do classification
         print("\n-------------Run Classification HPO---------------------------------------------")
-        db_url = "sqlite:///optuna_study.db"
-        cls_output = os.path.join(overall_output, 'cls_result')
-        os.makedirs(cls_output, exist_ok=True)
-        cv_results = do_classification(data=embeddings,
-                                    model_name=args.cls_model,
-                                    out_dir = cls_output,
-                                validation_cv=5,
-                                scoring_metrics=['roc_auc','f1','accuracy','average_precision'],
-                                rand_labels=False,
-                                mysql_url=db_url,
-                                num_processes=args.n_jobs,
-                                num_trials=args.num_trials)
+        for model_name in args.cls_model:
+            db_url = f"sqlite:///{os.path.join(overall_output, 'optuna_study.db')}"
+            cls_output = os.path.join(kge_output, 'cls_result', model_name)
+            os.makedirs(cls_output, exist_ok=True)
+            print(f"\n--- Running Classification HPO with model {model_name}---")
+            
+            cv_results = do_classification(
+                data=embeddings,
+                model_name=model_name,
+                out_dir=cls_output,
+                validation_cv=5,
+                scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
+                rand_labels=False,
+                mysql_url=db_url,
+                num_processes=args.n_jobs,
+                num_trials=args.num_trials
+            )
 
 if __name__=="__main__":
     main()
