@@ -307,15 +307,6 @@ class HRGCN(nn.Module):
 
         x_dict = new_x_dict
 
-        # x_dict = {
-        #     node_type: F.dropout(
-        #         F.elu(self.input_lins[node_type](x)),
-        #         p=self.dropout,
-        #         training=self.training,
-        #     )
-        #     for node_type, x in x_dict.items()
-        # }
-
         attn_weights = []
 
         # HRGCN layers
@@ -344,12 +335,13 @@ class HRGCN(nn.Module):
                 else:
                     # no incoming relations
                     new_x_dict[node_type] = x_dict[node_type]
-
             x_dict = new_x_dict
             attn_weights.append(att_dict)
-            out_dict = {
-                node_type: self.output_lins[node_type](x)
-                for node_type, x in x_dict.items()
-            }
+
+        # Output Projection
+        out_dict = {
+            node_type: self.output_lins[node_type](x)
+            for node_type, x in x_dict.items()
+        }
         
-        return x_dict, attn_weights
+        return out_dict, attn_weights

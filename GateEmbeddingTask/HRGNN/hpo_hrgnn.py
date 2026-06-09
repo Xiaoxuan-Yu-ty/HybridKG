@@ -92,7 +92,7 @@ def objective(trial, data, args, device) -> float:
             device=device
         )
         optimizer = torch.optim.AdamW(encoder.parameters(), lr=lr, weight_decay=weight_decay)
-
+        trained_model=None
         try:
             # Train (Shortened epochs for HPO speed)
             trained_model, _ = train(encoder, data, optimizer, epochs=int(args.epochs), args=args)
@@ -110,7 +110,7 @@ def objective(trial, data, args, device) -> float:
         finally:
             # Clean up memory even if training fails or is pruned
             del encoder, optimizer
-            if 'trained_model' in locals(): del trained_model
+            del trained_model
             gc.collect()           # Python garbage collection
             torch.cuda.empty_cache() # Clear GPU cache
 

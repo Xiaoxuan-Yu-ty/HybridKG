@@ -26,13 +26,13 @@ sys.path.append(os.path.dirname(base_dir))
 
 from GateEmbeddingTask.train_utils import (
     compute_link_loss, 
-    split_edge_indices,
     evaluate_link,
     build_data_dict,
     set_seed,
     convert_to_hetero_data,
+    get_device
 )
-from GateEmbeddingTask.HRGNN.HRGNN_models import get_model
+from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -163,49 +163,42 @@ def compute_scheduled_value(epoch, total_epochs, start_val, end_val, schedule_ty
         
     return start_val
 
-def train_epoch(model, data, optimizer, negative_sampling_ratio, lambda_att=0.1, cls_loss_flag=False):
+def train_epoch(model:TwoStageModel, 
+                data:HeteroData, 
+                optimizer, 
+                negative_sampling_ratio:float, 
+                device, 
+                lambda_link=0.1):
     model.train()
     optimizer.zero_grad()
 
-    z_dict, attention_weights = model(data.x_dict, data.edge_index_dict)
+    h_dict, h_patient = model(x_dict=data.x_dict, 
+                                        static_edge_index_dict = data.static_edge_index_dict,
+                                        dynamic_edge_index_dict= data.dynamic_edge_index_dict)
     mask = data['Patient'].train_mask
 
-    # cls loss
-    device = data['Patient'].y.device
-    if cls_loss_flag:
-        y_pred = model.classifier(z_dict['Patient'][mask])
-        y_true = data['Patient'].y[mask]
-        cls_loss = F.cross_entropy(y_pred, y_true)
-    else:
-        # create a zero tensor on the correct device so loss stays a tensor
-        cls_loss = torch.tensor(0.0, device=device)
-    
     # link prediction loss
     link_loss = compute_link_loss(model=model, 
-                                  z_dict=z_dict, 
+                                  z_dict=h_dict, 
                                   edge_index_dict=data.static_edge_index_dict,
                                   num_nodes_dict=data.num_nodes_dict,
                                   device=device,
                                   neg_ratio=negative_sampling_ratio)
+
+    # cls loss
+    y_pred = h_patient[mask]
+    y_true = data['Patient'].y[mask]
+    # F.cross_entropy combines log_softmax and nll_loss to calculate raw logits
+    cls_loss = F.cross_entropy(y_pred, y_true)
     
-    # attention loss
-    rel_names = attention_weights[-1]["Patient"]["relation_names"]
-    disease_idx = rel_names.index("Protein__rev_reg_disease__Patient")
-    control_idx = rel_names.index("Protein__rev_reg_control__Patient")
-    att_loss = hierarchical_attention_loss(attentions=attention_weights,
-                                           y=data['Patient'].y,
-                                           mask=mask,
-                                           disease_index=disease_idx,
-                                           control_index=control_idx,
-                                           )
-    loss = cls_loss + link_loss + lambda_att*att_loss
+    
+    loss = cls_loss + lambda_link*link_loss
 
     loss.backward()
     optimizer.step()
 
     loss_result = {'Total_loss': float(loss),
                                    'LP_loss': float(link_loss),
-                                   'Attention_loss': float(att_loss),
                                    'Cls_loss': float(cls_loss),
                                    }
 
@@ -214,117 +207,104 @@ def train_epoch(model, data, optimizer, negative_sampling_ratio, lambda_att=0.1,
 @torch.no_grad()
 def evaluate_cls(model, data, mask_name):
     model.eval()
-    model.eval()
-    out, attention_weights = model(data.x_dict, data.edge_index_dict)
-    
-    # Identify the mask tensor
+    # Ensure your model's forward pass returns the attention weights
+    h_dict, h_patient, attention_weights = model(
+        x_dict=data.x_dict, 
+        static_edge_index_dict=data.static_edge_index_dict,
+        dynamic_edge_index_dict=data.dynamic_edge_index_dict
+    )
+   
     mask = data['Patient'][mask_name] 
-    
-    # Extract logits and labels for the masked nodes
     y_true = data['Patient'].y[mask].cpu().numpy()
-    logits = out['Patient'][mask]
+    logits = h_patient[mask]
+
     pred = logits.argmax(dim=-1).cpu().numpy()
     prob = torch.softmax(logits, dim=-1)[:, 1].cpu().numpy()
 
-    # Metrics (Scikit-learn requires numpy on CPU)
-    acc = accuracy_score(y_true, pred)
-    f1 = f1_score(y_true, pred)
-    auroc = roc_auc_score(y_true, prob)
-    auprc = average_precision_score(y_true, prob)
-  
     metrics = {
-    'Accuracy': float(acc), 
-    'F1_score': float(f1), 
-    'AUROC': float(auroc), 
-    'AUPRC': float(auprc)
+        'Accuracy': float(accuracy_score(y_true, pred)), 
+        'F1_score': float(f1_score(y_true, pred)), 
+        'AUROC': float(roc_auc_score(y_true, prob)), 
+        'AUPRC': float(average_precision_score(y_true, prob))
     }
-    return metrics, attention_weights
+    
+    # Extract only the attention weights for the evaluated nodes
+    # Assuming attention_weights is a dict containing tensors mapping to nodes
+    masked_attention = None
+    if attention_weights is not None:
+        # Example extraction: adjust based on how your aggregator formats the attention output
+        # masked_attention = {layer_idx: att[mask].cpu().numpy() for layer_idx, att in enumerate(attention_weights)}
+        masked_attention = attention_weights # Keep it raw for now, or slice by [mask]
+        
+    return metrics, masked_attention
 
-def train(model, data, optimizer, epochs, args, cls_loss_flag=False):
+def sample_edges(edge_index_dict, sample_ratio=0.1):
+    """Helper to sample a percentage of edges for faster Hits@K evaluation."""
+    sampled_dict = {}
+    for etype, edge_index in edge_index_dict.items():
+        num_edges = edge_index.size(1)
+        num_samples = int(num_edges * sample_ratio)
+        perm = torch.randperm(num_edges)[:num_samples]
+        sampled_dict[etype] = edge_index[:, perm]
+    return sampled_dict
 
-    best_val = 0.0
+def train(model, 
+          data, 
+          optimizer, 
+          epochs, 
+          device, 
+          negative_sampling_ratio, 
+          num_negatives, 
+          pos_sample_cap,
+          args, 
+          is_hpo=True):
+    
+    best_composite = 0.0
     best_state = None
     train_history = {}
-    for epoch in tqdm(range(epochs), desc="Train HRGNN"):
-        epoch_record = {}
+    
+    # Sub-sample edges if we are doing HPO to save massive amounts of time
+    eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1) if is_hpo else data.static_edge_index_dict
 
-        current_lambda_att = compute_scheduled_value(
-            epoch=epoch, 
-            total_epochs=epochs, 
-            start_val=args.lambda_att_start, 
-            end_val=args.lambda_att_end, 
-            schedule_type=args.schedule_type
-        )
-        losses = train_epoch(model=model, 
-                        data=data, 
-                        x_dict=data.x_dict,
-                        edge_index_dict=data.train_edge_index_dict,
-                        optimizer=optimizer,
-                        negative_sampling_ratio=args.negative_sampling_ratio,
-                        lambda_att=current_lambda_att,
-                        cls_loss_flag=cls_loss_flag)
+    for epoch in tqdm(range(epochs), desc="Training Model"):
+        current_lambda_link = compute_scheduled_value(epoch, epochs, args.lambda_att_start, args.lambda_att_end, args.schedule_type)
         
-        total_loss, link_loss, att_loss, cls_loss = list(losses.values())
-
-        train_metrics, train_att = evaluate_cls(model=model, 
-                                    data=data,
-                                    mask_name='train_mask')
+        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_link)
         
-        val_metrics, val_att = evaluate_cls(model=model, 
-                                    data=data,
-                                    mask_name='val_mask')
+        train_metrics, _ = evaluate_cls(model, data, 'train_mask')
+        val_metrics, _ = evaluate_cls(model, data, 'val_mask')
        
-        val_hits = evaluate_link(model=model, 
-                                     train_edge_index_dict=data.train_edge_index_dict,
-                                     eval_edge_index_dict=data.val_edge_index_dict,
-                                     num_nodes_dict=data.num_nodes_dict,
-                                     device=args.device,
-                                     k=args.k,
-                                     num_negatives=args.num_negatives,
-                                     pos_sample_cap=args.pos_sample_cap
-                                     )
-        epoch_record['train_loss'] = losses
-        epoch_record['train_metrics'] = train_metrics
-        epoch_record['val_metrics']=val_metrics
-        epoch_record['val_hits@k'] = val_hits
+        # Evaluate Link on sampled edges (HPO) or all edges (Final)
+        val_hits = evaluate_link(
+            model=model, 
+            train_edge_index_dict=data.static_edge_index_dict,
+            eval_edge_index_dict=eval_edge_index_dict,
+            num_nodes_dict=data.num_nodes_dict,
+            device=device,
+            k=args.k if hasattr(args, 'k') else 10,
+            num_negatives=num_negatives,
+            pos_sample_cap=pos_sample_cap
+        )
         
-        # save the last layer's attention
-        try:
-            epoch_record['train_attention'] = {k: v.detach().cpu().tolist() for k, v in train_att[-1].items()}
-            epoch_record['val_attention'] = {k: v.detach().cpu().tolist() for k, v in val_att[-1].items()}
-        except:
-            serializable_train_att = {}
-            for node_type, content in train_att[-1].items():
-                serializable_train_att[node_type] = {
-                    "relation_names": content["relation_names"], # a list of strings
-                    "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
-                }
-            epoch_record['train_attention'] = serializable_train_att
-            
-            serializable_val_att = {}
-            
-            for node_type, content in val_att[-1].items():
-                serializable_val_att[node_type] = {
-                    "relation_names": content["relation_names"], # a list of strings
-                    "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
-                }
-            epoch_record['val_attention'] = serializable_val_att
+        # Calculate Composite Score (e.g., 40% F1, 40% AUROC, 20% average Hits)
+        composite_score = (0.4 * val_metrics['F1_score']) + (0.4 * val_metrics['AUROC']) + (0.2 * val_hits)
 
+        train_history[epoch] = {
+            'train_loss': losses, 
+            'train_metrics': train_metrics, 
+            'val_metrics': val_metrics, 
+            'val_hits@k': val_hits, 
+            'composite_score': composite_score
+        }
 
-        train_history[epoch]=epoch_record
-
-        if val_metrics["F1_score"] > best_val:
-            best_val = val_metrics["F1_score"]
+        if composite_score > best_composite:
+            best_composite = composite_score
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
-        
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f'Epoch: {epoch:03d}, Total_loss: {total_loss:.4f}, Cls_loss:{cls_loss}, Attention_loss:{att_loss}')
-            print(f"Train:{train_metrics} | Val: {val_metrics} \n")
             
     if best_state is not None:
         model.load_state_dict(best_state)
         
-    return model, train_history
+    return model, train_history, best_composite
 
 
 def objective(trial, data, args, device) -> float:
@@ -339,16 +319,30 @@ def objective(trial, data, args, device) -> float:
     out_channels = trial.suggest_categorical("hidden_channels", [32, 64, 128])
     att_channels = trial.suggest_categorical("att_channels", [16,32,64])
     num_layers = trial.suggest_categorical("num_layers",[2, 3, 4])
-    lambda_att_end = trial.suggest_float("lambda_att_end", 0.1, 1.0)
+    lambda_link_end = trial.suggest_float("lambda_att_end", 0.1, 1.0)
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
+    heads = trial.suggest_categorical("heads",[2,3,4])
     negative_slop = trial.suggest_float("negative_slop", 0.1, 0.5)
+    aggr = trial.suggest_categorical("aggr", ['sum','mean','min','max','cat'])
+    
+    # Link prediction parameters
+    negative_sampling_ratio=trial.suggest_float("negative_sampling_ratio", 0.1, 1.0)
+    num_negatives=trial.suggest_categorical("num_negatives",[50,100,200,500])
+    pos_sample_cap=trial.suggest_categorical("pos_sample_cap",[50,100,200,500])
 
     # 2. Setup K-Fold
     num_patients = data['Patient'].x.size(0)
     y_all = data['Patient'].y.cpu().numpy()
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    num_classes = max(y_all) + 1
+    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
     
-    fold_f1s = []
+    fold_composites = []
+    
+    # We will log the individual metrics to the trial so you can see them in Optuna dashboard
+    fold_f1s, fold_aurocs, fold_hits = [], [], []
+    # Sub-sample edges if we are doing HPO to save massive amounts of time
+    eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
+
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(num_patients), y_all)):
         # Update masks for this fold
@@ -358,84 +352,135 @@ def objective(trial, data, args, device) -> float:
         data['Patient'].val_mask[val_idx] = True
 
         # Re-initialize model for each fold
-        encoder, _ = get_model(
-            data=data,
-            model_type=args.model,
-            hidden_channels=hidden_channels,
-            out_channels=out_channels,
-            att_channels=att_channels,
-            num_layers=num_layers,
-            dropout=dropout,
-            negative_slop=negative_slop,
-            num_classes=2,
-            mode=args.mode,
-            device=device
-        )
-        optimizer = torch.optim.AdamW(encoder.parameters(), lr=lr, weight_decay=weight_decay)
-
+        model = get_model(data=data,
+                    kg_encoder_type=args.encoder_type,
+                    patient_encoder_type=args.aggregator_type,
+                    decoder_type=args.decoder_type,
+                    hidden_channels=hidden_channels, 
+                    out_channels=out_channels, 
+                    att_channels=att_channels,
+                    num_layers=num_layers, 
+                    dropout=dropout,
+                    heads=heads,
+                    aggr=aggr,
+                    negative_slop=negative_slop,
+                    num_classes=num_classes,
+                    device=device)
+        
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        
+        trained_model = None
         try:
-            # Train (Shortened epochs for HPO speed)
-            trained_model, _ = train(encoder, data, optimizer, epochs=int(args.epochs), args=args)
+            trained_model, _, best_composite = train(
+                model=model, data=data, optimizer=optimizer, epochs=int(args.epochs),
+                negative_sampling_ratio=negative_sampling_ratio, num_negatives=num_negatives,
+                pos_sample_cap=pos_sample_cap, args=args, device=device, is_hpo=True
+            )
             
-            # Evaluate
             val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
-            score = val_metrics['F1_score']
-            fold_f1s.append(score)
+            val_hits = evaluate_link(
+                                            model=model, 
+                                            train_edge_index_dict=data.static_edge_index_dict,
+                                            eval_edge_index_dict=eval_edge_index_dict,
+                                            num_nodes_dict=data.num_nodes_dict,
+                                            device=device,
+                                            k=args.k if hasattr(args, 'k') else 10,
+                                            num_negatives=num_negatives,
+                                            pos_sample_cap=pos_sample_cap
+                                        )
+            fold_composites.append(best_composite)
+            fold_f1s.append(val_metrics['F1_score'])
+            fold_aurocs.append(val_metrics['AUROC'])
+            fold_hits.append(val_hits)
 
-            # Optuna Pruning: Report intermediate result
-            trial.report(score, fold)
+            # Optuna Pruning based on composite, and report
+            trial.report(best_composite, fold)
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
         
         finally:
             # Clean up memory even if training fails or is pruned
-            del encoder, optimizer
-            if 'trained_model' in locals(): del trained_model # type: ignore
-            gc.collect()           # Python garbage collection
-            torch.cuda.empty_cache() # Clear GPU cache
+            if model is not None:
+                del model
+            if optimizer is not None:
+                del optimizer
+            if trained_model is not None:
+                del trained_model
+            gc.collect()
+            torch.cuda.empty_cache()
 
-    return float(np.mean(fold_f1s))
+    # Log specific metrics for analysis
+    trial.set_user_attr("mean_f1", float(np.mean(fold_f1s)))
+    trial.set_user_attr("mean_auroc", float(np.mean(fold_aurocs)))
+    trial.set_user_attr("hits@10", float(np.mean(fold_hits)))
 
-def hpo_cross_validate(new_data, study, args, device):
-  
+    return float(np.mean(fold_composites))
+
+def hpo_cross_validate(data, best_params, args, device):
     print("\n--- Final Cross-Validation Evaluation ---")
     final_results = {}
+    attention_archive = {} # Store attention weights across folds
+    
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
-    y_all = new_data['Patient'].y.cpu().numpy()
+    y_all = data['Patient'].y.cpu().numpy()
+    num_classes = max(y_all) + 1
     
     for fold, (train_idx, test_idx) in enumerate(skf.split(np.zeros(y_all.shape[0]), y_all)):
-        # Re-mask for final test
-        new_data['Patient'].train_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
-        new_data['Patient'].train_mask[train_idx] = True
-        new_data['Patient'].test_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
-        new_data['Patient'].test_mask[test_idx] = True
+        print(f"\n--- Running Final Evaluation Fold {fold+1}/5 ---")
+        
+        data['Patient'].train_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
+        data['Patient'].train_mask[train_idx] = True
+        data['Patient'].test_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
+        data['Patient'].test_mask[test_idx] = True
 
-        # Use study.best_params here
-        encoder, model = get_model(data=new_data, 
-                               model_type=args.model, 
-                               hidden_channels=study.best_params['hidden_channels'], 
-                               dropout=study.best_params['dropout'], 
-                               device=device, 
-                               out_channels=args.out_channels, 
-                               att_channels=study.best_params['att_channels'], 
-                               num_layers=study.best_params['num_layers'], 
-                               negative_slop=study.best_params['negative_slop'],
-                               mode=args.mode,
-                               num_classes=2)
+        model = get_model(
+            data=data, 
+            kg_encoder_type=args.encoder_type, 
+            patient_encoder_type=args.aggregator_type,
+            decoder_type=args.decoder_type, 
+            hidden_channels=best_params['hidden_channels'], 
+            out_channels=best_params['out_channels'], 
+            att_channels=best_params.get('att_channels', 32),
+            num_layers=best_params['num_layers'], 
+            dropout=best_params['dropout'],
+            heads=best_params.get('heads', 2), 
+            aggr=best_params.get('aggr', 'sum'),
+            negative_slop=best_params.get('negative_slop', 0.2), 
+            num_classes=num_classes, 
+            device=device
+        )
         
-        optimizer = torch.optim.AdamW(encoder.parameters(), lr=study.best_params['lr'], weight_decay=study.best_params['weight_decay'])
+        optimizer = torch.optim.AdamW(model.parameters(), 
+                                      lr=best_params['lr'], 
+                                      weight_decay=best_params['weight_decay'])
         
-        # Train on Fold
-        trained_model, history = train(encoder, new_data, optimizer, epochs=args.epochs, args=args)
+        # Train with is_hpo=False (uses 100% edges for hits@k logging)
+        trained_model, history, _ = train(
+            model=model, data=data, optimizer=optimizer, epochs=int(args.epochs), 
+            args=args, negative_sampling_ratio=best_params['negative_sampling_ratio'],
+            num_negatives=best_params['num_negatives'], pos_sample_cap=best_params['pos_sample_cap'],
+            device=device, is_hpo=False
+        )
         
-        # Test on Fold
-        fold_metrics, _ = evaluate_cls(trained_model, new_data, 'test_mask')
-        final_results[f"fold_{fold}"] = fold_metrics
+        # Test on Fold and grab attention weights
+        fold_metrics, attention_weights = evaluate_cls(trained_model, data, 'test_mask')
+        final_results[f"fold_{fold}"] = {
+            "metrics": fold_metrics,
+            "history": history
+        }
+        
+        # Move attention weights to CPU and save
+        if attention_weights is not None:
+            # TO DO: need to serializable attention weight for saving
+            attention_archive[f"fold_{fold}"] = attention_weights 
+            
+        del trained_model, model, optimizer
+        gc.collect(); torch.cuda.empty_cache()
     
-    return final_results
+    return final_results, attention_archive
 
 def parse():
-    parser = argparse.ArgumentParser(description="Hierarchical Relational GNN Training Pipeline")
+    parser = argparse.ArgumentParser(description="Two Stage Multi-Task-Learning Model HPO & Training Pipeline")
 
     # Paths
     parser.add_argument("--graph_path", type=str, default="../datasets/Patient_KGs/G_geo_dual_hybrid_ecdf.pkl")
@@ -456,7 +501,11 @@ def parse():
     parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--negative_slop", type=float, default=0.2)
-    parser.add_argument("--mode", type=str, default='distmult',
+    parser.add_argument("--encoder_type", type=str, default='hrgat', 
+                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
+    parser.add_argument("--aggregator_type", type=str, default='hrgat',
+                        choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
+    parser.add_argument("--decoder_type", type=str, default='distmult',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
                         help='KGE model style link prediction scoring function to choose.')
     
@@ -482,143 +531,69 @@ def parse():
 
     # Hardware & Seeding
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", type=str, default="cuda")
 
     args = parser.parse_args()
     return args
 
 
-# Main Block
-# ==========================================
 def main():
     args = parse()
-    
-    # Construct a unique, nested directory
-    final_output_dir = os.path.join(
-        args.output_dir, 
-        args.dataset, 
-        args.scoring, 
-        args.model,
-        args.method
-    )
-    os.makedirs(final_output_dir, exist_ok=True)
-    print(f"Results will be saved to: {final_output_dir}")
-    
-    set_seed(args.seed)
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    set_seed(seed=args.seed)
+    device = get_device()
     print(f"Executing on hardware device: {device}")
 
+    final_output_dir = os.path.join(
+        args.output_dir, args.dataset, args.scoring, 
+        args.encoder_type, args.decoder_type, args.aggregator_type
+    )
+    os.makedirs(final_output_dir, exist_ok=True)
+    
     # 1. Prepare HeteroData
     with open(args.graph_path, "rb") as f:
         G = pickle.load(f)
     data, node_mappings = convert_to_hetero_data(G)
-    new_data = merge_patient_protein_edges(data)
-    new_data = new_data.to(device)
+    data = build_data_dict(data).to(device)
 
-    # Build features
-    new_data.x_dict = build_x_dict(new_data)
-    new_data.edge_index_dict = {et:new_data[et].edge_index.to(device) for et in new_data.edge_types}
-
-    # Labels
-    y = new_data["Patient"].y
-    num_classes = int(y.max().item() + 1) if y.dim() == 1 else y.size(-1)
-    print(f"Number of classes: {num_classes}")
-
-    # 3. model is built
-    encoder, model = get_model(data=new_data,
-                    model_type = args.model,
-                    hidden_channels=args.hidden_channels, 
-                    out_channels=args.out_channels, 
-                    att_channels=args.att_channels,
-                    num_layers=args.num_layers, 
-                    dropout=args.dropout,
-                    negative_slop=args.negative_slop,
-                    num_classes=2,
-                    mode=args.mode,
-                    device=device)
-
-
-    optimizer = torch.optim.AdamW(
-        encoder.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay
-    )
-
-    # 4. Training loop execution with hyperparameter schedules
-    print(f"\n--- Initiating GNN Training Sequence with {args.schedule_type.upper()} Schedule ---")
-    print(f"Attention Loss Weight schedule: {args.lambda_att_start} -> {args.lambda_att_end}")
+    # 2. HPO (Optuna)
+    print("\n--- Starting Optuna HPO ---")
+    study = optuna.create_study(direction="maximize", study_name=f"{args.dataset}_{args.encoder_type}")
     
-    encoder, train_history = train(
-        model=encoder,
-        data=new_data,
-        optimizer=optimizer,
-        epochs=args.epochs,
-        args=args,
-    )
+    # Wrap objective to pass data, args, device
+    objective_func = lambda trial: objective(trial, data, args, device)
+    study.optimize(objective_func, n_trials=args.num_trail)
+    
+    print("\nBest Trial Composite Score:", study.best_value)
+    print("Best Params:", study.best_params)
 
-    # 5. Model evaluation on test data split
-    print("\n--- Running Final Evaluation on Test Split ---")
-    test_metrics, test_att = evaluate_cls(
-        model=encoder,
-        data=new_data,
-        mask_name='test_mask'
-    )
+    # Save Study Best Params
+    with open(os.path.join(final_output_dir, "best_hpo_params.json"), "w") as f:
+        json.dump(study.best_params, f, indent=4)
 
-    # 6. Results Persistence Layer
-   
-    history_save_path = os.path.join(final_output_dir, "train_history.json")
+    # 3. Retrain with best hyperparameters (Cross Validation)
+    final_results, attention_archive = hpo_cross_validate(data, study.best_params, args, device)
 
-    with open(history_save_path, "w") as fh:
-        json.dump(train_history, fh, indent=4)
-    print(f"Training history successfully preserved to: '{history_save_path}'")
-
-    metrics_save_path = os.path.join(final_output_dir, "test_metrics.json")
-    with open(metrics_save_path, "w") as mf:
-        json.dump(test_metrics, mf, indent=4)
-    print(f"Test split metrics successfully preserved to: '{metrics_save_path}'")
-
-    print("\n--- Test Set Metrics ---")
-    print(json.dumps(test_metrics, indent=4))
-
-    # Convert y to a simple numpy array if it's a tensor
-    y_np = y.cpu().numpy() if torch.is_tensor(y) else np.array(y)
-
-    # Save Patient-Level Alphas & Predictions to a structured CSV!
-    try:
-        beta = test_att[-1]['Patient']['attention']
-    except:
-        beta=test_att[-1]['Patient']
+    # Calculate Average Final Metrics
+    avg_metrics = {}
+    for fold, res in final_results.items():
+        for metric, val in res["metrics"].items():
+            avg_metrics[metric] = avg_metrics.get(metric, 0) + val
+    for metric in avg_metrics:
+        avg_metrics[metric] /= len(final_results)
         
-    try:
-        # Check if beta is a list and convert to numpy
-        if isinstance(beta, list):
-            beta = np.array(beta)
-        elif torch.is_tensor(beta):
-            beta = beta.detach().cpu().numpy()
-            
-        attention_df = pd.DataFrame({
-            "Patient_Index": [i for i in range(len(data["Patient"].test_mask))],
-            "Train": data["Patient"].train_mask.cpu().numpy(),
-            "Validation": data["Patient"].val_mask.cpu().numpy(),
-            "Test": data["Patient"].test_mask.cpu().numpy(),
-            "True_Label": y_np,
-            "reg_disease_attention": beta[:, 1], 
-            "reg_healthy_attention": beta[:, 2]
-        })
-        csv_save_path = os.path.join(final_output_dir, "test_attention.csv")
-        attention_df.to_csv(csv_save_path, index=False)
-        print(f"Patient-Protein relation attentions successfully saved to: '{csv_save_path}'")
-    
-    except Exception as e:
-        print(f"Error creating DataFrame: {e}")
-        # Fallback: if shapes are weird, just save the raw beta
-        print(f"Beta shape/type: {type(beta)}")
-        #print(beta)
+    print(f"\nFinal Averaged Test Metrics across 5 Folds: {avg_metrics}")
+
+    # 4. Save training history, metrics, and attention weights
+    with open(os.path.join(final_output_dir, "cv_metrics.json"), "w") as f:
+        json.dump({"average_metrics": avg_metrics, "folds": final_results}, f, indent=4)
+        
+    if attention_archive:
+        attention_path = os.path.join(final_output_dir, "attention_weights.pkl")
+        with open(attention_path, "wb") as f:
+            pickle.dump(attention_archive, f)
+        print(f"Attention weights saved to {attention_path}")
+
     
     
     
 if __name__ == "__main__":
-    main()
-
-    
-        
+    main()     
