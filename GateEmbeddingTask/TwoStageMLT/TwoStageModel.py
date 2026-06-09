@@ -108,7 +108,7 @@ class TwoStageModel(torch.nn.Module):
         h_final, attention_weights = self.aggregator(x_dict, dynamic_edge_index_dict)
         h_patient = self.classifier(h_final['Patient'])
         
-        return h_dict, h_patient
+        return h_dict, h_patient, attention_weights
 
     def decode(self, h_dict, edge_type, edge_index):
         # Used for Link Prediction loss

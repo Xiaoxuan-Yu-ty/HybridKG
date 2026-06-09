@@ -172,7 +172,7 @@ def train_epoch(model:TwoStageModel,
     model.train()
     optimizer.zero_grad()
 
-    h_dict, h_patient = model(x_dict=data.x_dict, 
+    h_dict, h_patient,_ = model(x_dict=data.x_dict, 
                                         static_edge_index_dict = data.static_edge_index_dict,
                                         dynamic_edge_index_dict= data.dynamic_edge_index_dict)
     mask = data['Patient'].train_mask
@@ -207,7 +207,7 @@ def train_epoch(model:TwoStageModel,
 @torch.no_grad()
 def evaluate_cls(model, data, mask_name):
     model.eval()
-    # Ensure your model's forward pass returns the attention weights
+    # Ensure model's forward pass returns the attention weights
     h_dict, h_patient, attention_weights = model(
         x_dict=data.x_dict, 
         static_edge_index_dict=data.static_edge_index_dict,
@@ -229,12 +229,10 @@ def evaluate_cls(model, data, mask_name):
     }
     
     # Extract only the attention weights for the evaluated nodes
-    # Assuming attention_weights is a dict containing tensors mapping to nodes
     masked_attention = None
     if attention_weights is not None:
-        # Example extraction: adjust based on how your aggregator formats the attention output
-        # masked_attention = {layer_idx: att[mask].cpu().numpy() for layer_idx, att in enumerate(attention_weights)}
-        masked_attention = attention_weights # Keep it raw for now, or slice by [mask]
+        # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
+        masked_attention = attention_weights 
         
     return metrics, masked_attention
 
@@ -257,7 +255,8 @@ def train(model,
           num_negatives, 
           pos_sample_cap,
           args, 
-          is_hpo=True):
+          is_hpo=True,
+          is_multi_metrics=True):
     
     best_composite = 0.0
     best_state = None
@@ -286,19 +285,21 @@ def train(model,
             pos_sample_cap=pos_sample_cap
         )
         
-        # Calculate Composite Score (e.g., 40% F1, 40% AUROC, 20% average Hits)
-        composite_score = (0.4 * val_metrics['F1_score']) + (0.4 * val_metrics['AUROC']) + (0.2 * val_hits)
+        score = val_metrics['AUROC']
+        if is_multi_metrics:
+            # Calculate Composite Score (e.g., 40% F1, 40% AUROC, 20% average Hits)
+            score = (0.4 * val_metrics['F1_score']) + (0.4 * val_metrics['AUROC']) + (0.2 * val_hits)
 
         train_history[epoch] = {
             'train_loss': losses, 
             'train_metrics': train_metrics, 
             'val_metrics': val_metrics, 
             'val_hits@k': val_hits, 
-            'composite_score': composite_score
+            'composite_score': score
         }
 
-        if composite_score > best_composite:
-            best_composite = composite_score
+        if score > best_composite:
+            best_composite = score
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
             
     if best_state is not None:
@@ -307,7 +308,7 @@ def train(model,
     return model, train_history, best_composite
 
 
-def objective(trial, data, args, device) -> float:
+def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     """Optuna objective function for HPO."""
     # 1. Suggest Hyperparameters
     # Optimizer parameters
@@ -374,7 +375,7 @@ def objective(trial, data, args, device) -> float:
             trained_model, _, best_composite = train(
                 model=model, data=data, optimizer=optimizer, epochs=int(args.epochs),
                 negative_sampling_ratio=negative_sampling_ratio, num_negatives=num_negatives,
-                pos_sample_cap=pos_sample_cap, args=args, device=device, is_hpo=True
+                pos_sample_cap=pos_sample_cap, args=args, device=device, is_hpo=True, is_multi_metrics=is_multi_metrics
             )
             
             val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
@@ -471,8 +472,14 @@ def hpo_cross_validate(data, best_params, args, device):
         
         # Move attention weights to CPU and save
         if attention_weights is not None:
-            # TO DO: need to serializable attention weight for saving
-            attention_archive[f"fold_{fold}"] = attention_weights 
+            # TO DO: need to serialize attention weight for saving
+            serializable_att = {}
+            for node_type, content in attention_weights[-1].items():
+                serializable_att[node_type] = {
+                    "relation_names": content["relation_names"], # a list of strings
+                    "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
+                }
+            attention_archive[f"fold_{fold}"] = serializable_att
             
         del trained_model, model, optimizer
         gc.collect(); torch.cuda.empty_cache()
@@ -556,10 +563,10 @@ def main():
 
     # 2. HPO (Optuna)
     print("\n--- Starting Optuna HPO ---")
-    study = optuna.create_study(direction="maximize", study_name=f"{args.dataset}_{args.encoder_type}")
+    study = optuna.create_study(direction="maximize", study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
     
     # Wrap objective to pass data, args, device
-    objective_func = lambda trial: objective(trial, data, args, device)
+    objective_func = lambda trial: objective(trial, data, args, device, is_multi_metrics=False)
     study.optimize(objective_func, n_trials=args.num_trail)
     
     print("\nBest Trial Composite Score:", study.best_value)
