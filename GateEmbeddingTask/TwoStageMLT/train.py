@@ -1,7 +1,9 @@
 import gc
 import pickle
 import json
+from typing import Any, Dict, List
 import numpy as np
+import psutil
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -145,6 +147,22 @@ def hierarchical_attention_loss(
     total_att_loss = total_att_loss / len(attentions)
 
     return total_att_loss
+
+def serialize_attention_weight(attention_weights:List[Dict]):
+    
+    serializable_att = {}
+    try:      
+        for node_type, content in attention_weights[-1].items():
+            serializable_att[node_type] = {
+                "relation_names": content["relation_names"], # a list of strings
+                "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
+            }
+    except:
+        for edge_type, attention in attention_weights[-1].items():
+            serializable_att[edge_type] = attention.detach().cpu().tolist()
+    
+    return serializable_att
+    
 
 def compute_scheduled_value(epoch, total_epochs, start_val, end_val, schedule_type='linear'):
     """
@@ -354,6 +372,10 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     # Sub-sample edges if we are doing HPO to save massive amounts of time
     eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
 
+    print(
+        f"RAM before model: "
+        f"{psutil.Process().memory_info().rss/1024**3:.2f} GB"
+    )
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(num_patients), y_all)):
         # Update masks for this fold
@@ -426,6 +448,11 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     trial.set_user_attr("mean_auroc", float(np.mean(fold_aurocs)))
     trial.set_user_attr("hits@10", float(np.mean(fold_hits)))
 
+    print(
+        f"RAM after model: "
+        f"{psutil.Process().memory_info().rss/1024**3:.2f} GB"
+    )
+
     return float(np.mean(fold_composites))
 
 def hpo_cross_validate(data, best_params, args, device):
@@ -482,14 +509,9 @@ def hpo_cross_validate(data, best_params, args, device):
         }
         
         # Move attention weights to CPU and save
+        # TO DO: need a function to deal with different attention weights format
         if attention_weights is not None:
-            # TO DO: need to serialize attention weight for saving
-            serializable_att = {}
-            for node_type, content in attention_weights[-1].items():
-                serializable_att[node_type] = {
-                    "relation_names": content["relation_names"], # a list of strings
-                    "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
-                }
+            serializable_att = serialize_attention_weight(attention_weights=attention_weights)
             attention_archive[f"fold_{fold}"] = serializable_att
             
         del trained_model, model, optimizer
@@ -509,9 +531,9 @@ def parse():
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     parser.add_argument("--method", type=str, default="dual_hybrid", choices=['dual_hybrid','merge'], 
                         help="Network construction strategy.")
-    parser.add_argument("--encoder_type", type=str, default='graphsage', 
+    parser.add_argument("--encoder_type", type=str, default='rgat', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--aggregator_type", type=str, default='graphsage',
+    parser.add_argument("--aggregator_type", type=str, default='rgat',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--decoder_type", type=str, default='distmult',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
@@ -579,7 +601,7 @@ def main():
     
     # Wrap objective to pass data, args, device
     objective_func = lambda trial: objective(trial, data, args, device, is_multi_metrics=False)
-    study.optimize(objective_func, n_trials=args.num_trial)
+    study.optimize(objective_func, n_trials=args.num_trial, n_jobs=1)
     
     print("\nBest Trial Composite Score:", study.best_value)
     print("Best Params:", study.best_params)

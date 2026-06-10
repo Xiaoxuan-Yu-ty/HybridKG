@@ -23,7 +23,7 @@ class HRGATLayer(nn.Module):
 
     def __init__(self, metadata, in_dim, out_dim, att_dim=32, dropout=0.5, negative_slope=0.2,):
         super().__init__()
-
+        # metadata = (node_types:List, edge_types:List)
         self.node_types, self.edge_types = metadata
 
         self.in_dim = in_dim

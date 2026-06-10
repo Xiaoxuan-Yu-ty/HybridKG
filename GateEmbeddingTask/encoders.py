@@ -23,7 +23,7 @@ from HRGNN.HRGATConv import HRGATLayer
 
 class BaseHeteroEncoder(torch.nn.Module):
     """Base class that handles input projections and learnable embeddings."""
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate):
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope,):
         super().__init__()
         self.dropout_rate = dropout_rate
         self.num_layers = num_layers
@@ -67,7 +67,7 @@ class HRGATEncoder(BaseHeteroEncoder):
                  dropout_rate, 
                  att_channels=32,
                  negative_slope=0.2):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         self.layers = nn.ModuleList([
             HRGATLayer(
@@ -104,8 +104,8 @@ class HRGCNEncoder(BaseHeteroEncoder):
                  num_layers, 
                  dropout_rate, 
                  att_channels=32,
-                 negative_slop=0.2):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+                 negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         self.layers = nn.ModuleList([
             HRGCNLayer(
@@ -114,7 +114,7 @@ class HRGCNEncoder(BaseHeteroEncoder):
                 out_dim=hidden_channels if i < num_layers - 1 else out_channels,
                 att_dim=att_channels,
                 dropout=dropout_rate,
-                negative_slop=negative_slop,
+                negative_slop=negative_slope,
             ) for i in range(num_layers)
         ])
 
@@ -136,8 +136,8 @@ class HRGCNEncoder(BaseHeteroEncoder):
         return x_dict, attention_weights
     
 class HGTEncoder(BaseHeteroEncoder):
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2, negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         self.convs = torch.nn.ModuleList()
         # Keep node types, but we will pass the runtime edge types dynamically
         self.node_types = data.node_types
@@ -156,7 +156,11 @@ class HGTEncoder(BaseHeteroEncoder):
             for i in range(self.num_layers):
                 in_c = self.hidden_channels
                 out_c = self.out_channels if i == self.num_layers - 1 else self.hidden_channels
-                self.convs.append(HGTConv(in_c, out_c, metadata=runtime_metadata, heads=self.heads).to(x_dict[self.node_types[0]].device))
+                self.convs.append(HGTConv(in_c, 
+                                          out_c, 
+                                          metadata=runtime_metadata, 
+                                          heads=self.heads
+                                          ).to(x_dict[self.node_types[0]].device))
             self.is_initialized = True
 
         for i, conv in enumerate(self.convs):
@@ -185,8 +189,8 @@ class HGTEncoder(BaseHeteroEncoder):
 #         return x_dict, None
 
 class HGATEncoder(BaseHeteroEncoder):
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2, aggr='sum'):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2, aggr='sum', negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         self.convs = torch.nn.ModuleList()
         self.aggr=aggr
@@ -203,7 +207,11 @@ class HGATEncoder(BaseHeteroEncoder):
             out_c = out_channels if i == num_layers - 1 else hidden_channels
             # Note: GAT output dim per layer is out_channels * heads
             self.convs.append(HeteroConv({
-                etype: GATConv(in_c, out_c if i < num_layers - 1 else out_c, heads=1, add_self_loops=False)
+                etype: GATConv(in_c, 
+                               out_c if i < num_layers - 1 else out_c, 
+                               heads=1, 
+                               add_self_loops=False,
+                               negative_slope=negative_slope)
                 for etype in data.edge_types
             }, aggr=aggr))
 
@@ -237,9 +245,9 @@ class HGATEncoder(BaseHeteroEncoder):
         return x_dict,None
     
 class RGCNEcoder(BaseHeteroEncoder):
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, num_relations, aggr='sum'):
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, aggr='sum', negative_slope=0.2):
         # Note: num_relations is the total number of relation types in the dataset
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         # Track node/edge types and pre-assign stable relation indices
         self.node_types = data.node_types
@@ -252,7 +260,11 @@ class RGCNEcoder(BaseHeteroEncoder):
             in_c = hidden_channels
             out_c = out_channels if i == num_layers - 1 else hidden_channels
             # Using standard mean aggregation inside the native relational layer
-            self.convs.append(RGCNConv(in_c, out_c, num_relations=self.num_relations, aggr='mean'))
+            self.convs.append(RGCNConv(in_c, 
+                                       out_c, 
+                                       num_relations=self.num_relations, 
+                                       aggr=aggr,
+                                       ))
 
     def forward(self, x_dict, edge_index_dict):
         # 1. Initialize node embeddings dictionary
@@ -320,8 +332,8 @@ class RGCNEcoder(BaseHeteroEncoder):
         return out_x_dict, None
 
 class RGATEncoder(BaseHeteroEncoder):
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=4, aggr='sum'):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=4, aggr='sum', negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         self.node_types = data.node_types
         self.edge_types = data.edge_types
@@ -341,7 +353,8 @@ class RGATEncoder(BaseHeteroEncoder):
                 num_relations=self.num_relations, 
                 heads=heads, 
                 concat=False, 
-                dropout=dropout_rate
+                dropout=dropout_rate,
+                negative_slope=negative_slope,
             ))
 
     def forward(self, x_dict, edge_index_dict):
@@ -365,7 +378,7 @@ class RGATEncoder(BaseHeteroEncoder):
         edge_type_list = []
         
         for etype, edge_index in edge_index_dict.items():
-            if edge_index.num_edges > 0:
+            if edge_index.size(1) > 0:
                 src_nt, _, dst_nt = etype
                 src_offset = node_offsets[src_nt]
                 dst_offset = node_offsets[dst_nt]
@@ -426,8 +439,8 @@ class RGATEncoder(BaseHeteroEncoder):
         return out_x_dict, all_layer_attentions
 
 class GraphSageEncoder(BaseHeteroEncoder):
-    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, aggr='sum'):
-        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+    def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, aggr='sum', negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
         
         self.aggr=aggr
         # Pre-calculate incoming edge types per node type
@@ -442,7 +455,8 @@ class GraphSageEncoder(BaseHeteroEncoder):
             in_c = hidden_channels
             out_c = out_channels if i == num_layers - 1 else hidden_channels
             self.convs.append(HeteroConv({
-                etype: SAGEConv(in_c, out_c) for etype in data.edge_types
+                etype: SAGEConv(in_c, 
+                                out_c,) for etype in data.edge_types
             }, aggr=aggr))
 
             # The specific projection for this layer
@@ -492,7 +506,7 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                             num_layers=num_layers, 
                             dropout_rate=dropout,
                             att_channels=att_channels,
-                            negative_slop=negative_slop)
+                            negative_slope=negative_slop)
     
     elif enc_type == 'rgcn':
         # Assuming num_relations is derived from data.edge_types
@@ -501,8 +515,8 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                           out_channels=out_channels, 
                           num_layers=num_layers, 
                           dropout_rate=dropout, 
-                          num_relations=len(data.edge_types),
-                          aggr=aggr)
+                          aggr=aggr,
+                          negative_slope=negative_slop)
     
     elif enc_type == 'rgat':
         return RGATEncoder(data=data, 
@@ -511,7 +525,8 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                            num_layers=num_layers, 
                            dropout_rate=dropout,
                            heads=heads, 
-                           aggr=aggr,)
+                           aggr=aggr,
+                           negative_slope=negative_slop)
     
     elif enc_type == 'hgt':
         # HGT usually requires heads; default to 2 if not specified
@@ -520,7 +535,8 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                           out_channels=out_channels, 
                           num_layers=num_layers, 
                           dropout_rate=dropout, 
-                          heads=heads,)
+                          heads=heads,
+                          negative_slope=negative_slop)
     
     elif enc_type == 'hgat':
         return HGATEncoder(data=data, 
@@ -529,7 +545,8 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                            num_layers=num_layers, 
                            dropout_rate=dropout, 
                            heads=heads, 
-                           aggr=aggr,)
+                           aggr=aggr,
+                           negative_slope=negative_slop)
     
     elif enc_type == 'graphsage':
         return GraphSageEncoder(data=data, 
@@ -537,7 +554,8 @@ def get_encoder(enc_type, data, hidden_channels, out_channels, att_channels,num_
                                 out_channels=out_channels, 
                                 num_layers=num_layers, 
                                 dropout_rate=dropout, 
-                                aggr=aggr,)
+                                aggr=aggr,
+                                negative_slope=negative_slop)
     
     else:
         raise ValueError(f"Unknown encoder type: {enc_type}. "
