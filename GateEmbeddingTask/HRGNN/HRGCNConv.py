@@ -104,6 +104,8 @@ class RelationAttentionAggregation(nn.Module):
 
             src_type, edge_type, dst_type = rel
             rel_key = self.rel_to_key(rel)
+            if rel not in edge_index_dict:
+                continue  # Skip message passing for this relation if no edges are provided
             edge_index = edge_index_dict[rel]
 
             # source node embeddings

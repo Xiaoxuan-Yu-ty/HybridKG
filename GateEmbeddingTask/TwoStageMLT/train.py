@@ -334,7 +334,7 @@ def objective(trial, data, args, device, is_multi_metrics=True) -> float:
     dropout = trial.suggest_float("dropout", 0.1, 0.5)
     heads = trial.suggest_categorical("heads",[2,3,4])
     negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
-    aggr = trial.suggest_categorical("aggr", ['sum','mean','min','max','cat'])
+    aggr = trial.suggest_categorical("aggr", ['sum','mean'])
     
     # Link prediction parameters
     negative_sampling_ratio=trial.suggest_float("negative_sampling_ratio", 0.1, 1.0)
@@ -509,9 +509,9 @@ def parse():
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     parser.add_argument("--method", type=str, default="dual_hybrid", choices=['dual_hybrid','merge'], 
                         help="Network construction strategy.")
-    parser.add_argument("--encoder_type", type=str, default='hrgat', 
+    parser.add_argument("--encoder_type", type=str, default='graphsage', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--aggregator_type", type=str, default='hrgat',
+    parser.add_argument("--aggregator_type", type=str, default='graphsage',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--decoder_type", type=str, default='distmult',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],

@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch_geometric.nn import HeteroConv, RGCNConv, GATConv, SAGEConv, HGTConv, Linear
+from torch_geometric.nn import HeteroConv, RGATConv, RGCNConv, GATConv, SAGEConv, HGTConv, Linear
 from torch_geometric.utils import softmax
 from torch_geometric.data import HeteroData
 from torch_scatter import scatter
@@ -135,25 +135,54 @@ class HRGCNEncoder(BaseHeteroEncoder):
         
         return x_dict, attention_weights
     
-
 class HGTEncoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2):
         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
         self.convs = torch.nn.ModuleList()
-        metadata = data.metadata()
-        
-        for i in range(num_layers):
-            in_c = hidden_channels
-            out_c = out_channels if i == num_layers - 1 else hidden_channels
-            self.convs.append(HGTConv(in_c, out_c, metadata=metadata, heads=heads))
+        # Keep node types, but we will pass the runtime edge types dynamically
+        self.node_types = data.node_types
+        self.hidden_channels = hidden_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.num_layers = num_layers
+        self.is_initialized = False
 
     def forward(self, x_dict, edge_index_dict):
         x_dict = self.get_initial_x_dict(x_dict)
+        
+        # Dynamically build HGTConv layers on the first pass based on what edges are provided
+        if not self.is_initialized:
+            runtime_metadata = (self.node_types, list(edge_index_dict.keys()))
+            for i in range(self.num_layers):
+                in_c = self.hidden_channels
+                out_c = self.out_channels if i == self.num_layers - 1 else self.hidden_channels
+                self.convs.append(HGTConv(in_c, out_c, metadata=runtime_metadata, heads=self.heads).to(x_dict[self.node_types[0]].device))
+            self.is_initialized = True
+
         for i, conv in enumerate(self.convs):
             x_dict = conv(x_dict, edge_index_dict)
             if i < self.num_layers - 1:
                 x_dict = self._apply_activation_dropout(x_dict)
         return x_dict, None
+    
+# class HGTEncoder(BaseHeteroEncoder):
+#     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2):
+#         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
+#         self.convs = torch.nn.ModuleList()
+#         metadata = data.metadata()
+        
+#         for i in range(num_layers):
+#             in_c = hidden_channels
+#             out_c = out_channels if i == num_layers - 1 else hidden_channels
+#             self.convs.append(HGTConv(in_c, out_c, metadata=metadata, heads=heads))
+
+#     def forward(self, x_dict, edge_index_dict):
+#         x_dict = self.get_initial_x_dict(x_dict)
+#         for i, conv in enumerate(self.convs):
+#             x_dict = conv(x_dict, edge_index_dict)
+#             if i < self.num_layers - 1:
+#                 x_dict = self._apply_activation_dropout(x_dict)
+#         return x_dict, None
 
 class HGATEncoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2, aggr='sum'):
@@ -174,7 +203,7 @@ class HGATEncoder(BaseHeteroEncoder):
             out_c = out_channels if i == num_layers - 1 else hidden_channels
             # Note: GAT output dim per layer is out_channels * heads
             self.convs.append(HeteroConv({
-                etype: GATConv(in_c, out_c // heads if i < num_layers - 1 else out_c, heads=heads)
+                etype: GATConv(in_c, out_c if i < num_layers - 1 else out_c, heads=1, add_self_loops=False)
                 for etype in data.edge_types
             }, aggr=aggr))
 
@@ -209,100 +238,192 @@ class HGATEncoder(BaseHeteroEncoder):
     
 class RGCNEcoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, num_relations, aggr='sum'):
+        # Note: num_relations is the total number of relation types in the dataset
         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
         
-        self.aggr=aggr
-        # Pre-calculate incoming edge types per node type
-        self.projection_dims = {
-            nt: len([etype for etype in data.edge_types if etype[2] == nt])
-            for nt in data.node_types
-        }
-        self.projections = nn.ModuleList() # List of projections for each layer
-        
+        # Track node/edge types and pre-assign stable relation indices
+        self.node_types = data.node_types
+        self.edge_types = data.edge_types
+        self.etype_to_idx = {etype: idx for idx, etype in enumerate(self.edge_types)}
+        self.num_relations = len(self.edge_types)
 
         self.convs = torch.nn.ModuleList()
         for i in range(num_layers):
-            in_c = hidden_channels if i > 0 else hidden_channels
+            in_c = hidden_channels
             out_c = out_channels if i == num_layers - 1 else hidden_channels
-            # HeteroConv with RGCN for each edge type
-            self.convs.append(HeteroConv({
-                etype: RGCNConv(in_c, out_c, num_relations=num_relations) 
-                for etype in data.edge_types
-            }, aggr=aggr))
-
-            # The specific projection for this layer
-            if aggr == 'cat':
-                layer_projections = nn.ModuleDict({
-                    nt: nn.Linear(out_c * self.projection_dims[nt], out_c)
-                    for nt in data.node_types if self.projection_dims[nt] > 0
-                })
-                self.projections.append(layer_projections)
+            # Using standard mean aggregation inside the native relational layer
+            self.convs.append(RGCNConv(in_c, out_c, num_relations=self.num_relations, aggr='mean'))
 
     def forward(self, x_dict, edge_index_dict):
+        # 1. Initialize node embeddings dictionary
         x_dict = self.get_initial_x_dict(x_dict)
-        for i, conv in enumerate(self.convs):
-            x_dict = conv(x_dict, edge_index_dict)
+        device = list(x_dict.values())[0].device
 
-            # Apply layer-specific projection if 'cat' is used
-            if self.aggr == 'cat':
-                proj_layer = self.projections[i]
-                if isinstance(proj_layer, nn.ModuleDict):
-                    x_dict = {
-                        nt: proj_layer[nt](x)
-                        for nt, x in x_dict.items()
-                        if nt in proj_layer
-                    }
+        # 2. Convert Heterogeneous dictionary data to Global Unified Tensors
+        node_offsets = {}
+        current_offset = 0
+        x_list = []
+        
+        # Calculate offsets to map local node IDs to unified global IDs
+        for nt in self.node_types:
+            node_offsets[nt] = current_offset
+            x_list.append(x_dict[nt])
+            current_offset += x_dict[nt].size(0)
+            
+        x_global = torch.cat(x_list, dim=0)
+
+        # Build global edge_index and edge_type vectors based on active edge types
+        edge_index_list = []
+        edge_type_list = []
+        
+        for etype, edge_index in edge_index_dict.items():
+            if edge_index.num_edges > 0:
+                src_nt, _, dst_nt = etype
+                # Map local node IDs to global space using offsets
+                src_offset = node_offsets[src_nt]
+                dst_offset = node_offsets[dst_nt]
+                
+                global_edge_index = edge_index.clone()
+                global_edge_index[0] += src_offset
+                global_edge_index[1] += dst_offset
+                
+                edge_index_list.append(global_edge_index)
+                
+                # Assign the pre-calculated unique relation integer
+                rel_idx = self.etype_to_idx[etype]
+                edge_types_tensor = torch.full((edge_index.size(1),), rel_idx, dtype=torch.long, device=device)
+                edge_type_list.append(edge_types_tensor)
+
+        # Handle empty edge dictionary gracefully (if no edges are passed in a stage)
+        if len(edge_index_list) > 0:
+            edge_index_global = torch.cat(edge_index_list, dim=1)
+            edge_type_global = torch.cat(edge_type_list, dim=0)
+        else:
+            edge_index_global = torch.empty((2, 0), dtype=torch.long, device=device)
+            edge_type_global = torch.empty((0,), dtype=torch.long, device=device)
+
+        # 3. Message Passing on Unified Graph
+        for i, conv in enumerate(self.convs):
+            x_global = conv(x_global, edge_index_global, edge_type_global)
             if i < self.num_layers - 1:
-                x_dict = self._apply_activation_dropout(x_dict)
-        return x_dict, None
+                # Apply activation and dropout to the unified tensor
+                x_global = F.relu(x_global)
+                x_global = F.dropout(x_global, p=self.dropout_rate, training=self.training)
+
+        # 4. Map unified global tensor back into heterogeneous dictionary formats
+        out_x_dict = {}
+        for nt in self.node_types:
+            offset = node_offsets[nt]
+            num_nodes = x_dict[nt].size(0)
+            out_x_dict[nt] = x_global[offset : offset + num_nodes]
+
+        return out_x_dict, None
 
 class RGATEncoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=4, aggr='sum'):
         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
         
-        self.aggr=aggr
-        # Pre-calculate incoming edge types per node type
-        self.projection_dims = {
-            nt: len([etype for etype in data.edge_types if etype[2] == nt])
-            for nt in data.node_types
-        }
-        self.projections = nn.ModuleList() # List of projections for each layer
-        
+        self.node_types = data.node_types
+        self.edge_types = data.edge_types
+        self.etype_to_idx = {etype: idx for idx, etype in enumerate(self.edge_types)}
+        self.idx_to_etype = {idx: etype for etype, idx in self.etype_to_idx.items()}
+        self.num_relations = len(self.edge_types)
+
         self.convs = torch.nn.ModuleList()
         for i in range(num_layers):
-            in_c = hidden_channels if i > 0 else hidden_channels
+            in_c = hidden_channels
             out_c = out_channels if i == num_layers - 1 else hidden_channels
-            # Using GATConv within HeteroConv for RGAT behavior
-            self.convs.append(HeteroConv({
-                etype: GATConv(in_c, out_c // heads if i < num_layers-1 else out_c, heads=heads)
-                for etype in data.edge_types
-            },aggr=aggr))
-
-            # The specific projection for this layer
-            if aggr == 'cat':
-                layer_projections = nn.ModuleDict({
-                    nt: nn.Linear(out_c * self.projection_dims[nt], out_c)
-                    for nt in data.node_types if self.projection_dims[nt] > 0
-                })
-                self.projections.append(layer_projections)
+            # Native RGATConv handles relational multi-head attention internally
+            # concat=False averages heads at output to maintain dim consistency across layers
+            self.convs.append(RGATConv(
+                in_c, 
+                out_c, 
+                num_relations=self.num_relations, 
+                heads=heads, 
+                concat=False, 
+                dropout=dropout_rate
+            ))
 
     def forward(self, x_dict, edge_index_dict):
+        # 1. Initialize node embeddings dictionary
         x_dict = self.get_initial_x_dict(x_dict)
-        for i, conv in enumerate(self.convs):
-            x_dict = conv(x_dict, edge_index_dict)
+        device = list(x_dict.values())[0].device
 
-            # Apply layer-specific projection if 'cat' is used
-            if self.aggr == 'cat':
-                proj_layer = self.projections[i]
-                if isinstance(proj_layer, nn.ModuleDict):
-                    x_dict = {
-                        nt: proj_layer[nt](x)
-                        for nt, x in x_dict.items()
-                        if nt in proj_layer
-                    }
+        # 2. Convert Heterogeneous data to Global Unified Tensors
+        node_offsets = {}
+        current_offset = 0
+        x_list = []
+        
+        for nt in self.node_types:
+            node_offsets[nt] = current_offset
+            x_list.append(x_dict[nt])
+            current_offset += x_dict[nt].size(0)
+            
+        x_global = torch.cat(x_list, dim=0)
+
+        edge_index_list = []
+        edge_type_list = []
+        
+        for etype, edge_index in edge_index_dict.items():
+            if edge_index.num_edges > 0:
+                src_nt, _, dst_nt = etype
+                src_offset = node_offsets[src_nt]
+                dst_offset = node_offsets[dst_nt]
+                
+                global_edge_index = edge_index.clone()
+                global_edge_index[0] += src_offset
+                global_edge_index[1] += dst_offset
+                
+                edge_index_list.append(global_edge_index)
+                
+                rel_idx = self.etype_to_idx[etype]
+                edge_types_tensor = torch.full((edge_index.size(1),), rel_idx, dtype=torch.long, device=device)
+                edge_type_list.append(edge_types_tensor)
+
+        if len(edge_index_list) > 0:
+            edge_index_global = torch.cat(edge_index_list, dim=1)
+            edge_type_global = torch.cat(edge_type_list, dim=0)
+        else:
+            edge_index_global = torch.empty((2, 0), dtype=torch.long, device=device)
+            edge_type_global = torch.empty((0,), dtype=torch.long, device=device)
+
+        # 3. Message Passing and Attention Extraction
+        all_layer_attentions = []
+        
+        for i, conv in enumerate(self.convs):
+            # Capture both outputs and internal attention coefficients matrix
+            x_global, (edge_idx_res, att_weights) = conv(
+                x_global, 
+                edge_index_global, 
+                edge_type_global, 
+                return_attention_weights=True
+            )
+            
+            # Separate global attention weights back out into edge-type dictionaries for your downstream logging
+            layer_att_dict = {}
+            for etype in edge_index_dict.keys():
+                rel_idx = self.etype_to_idx[etype]
+                # Filter the indices matching this specific relation
+                mask = (edge_type_global == rel_idx)
+                if mask.any():
+                    # Keep local shapes aligned with input edge indices
+                    layer_att_dict[etype] = att_weights[mask]
+                else:
+                    layer_att_dict[etype] = torch.empty((0,), device=device)
+            all_layer_attentions.append(layer_att_dict)
+
             if i < self.num_layers - 1:
-                x_dict = self._apply_activation_dropout(x_dict)
-        return x_dict, None
+                x_global = F.relu(x_global)
+                x_global = F.dropout(x_global, p=self.dropout_rate, training=self.training)
+
+        # 4. Map back into heterogeneous dictionaries
+        out_x_dict = {}
+        for nt in self.node_types:
+            offset = node_offsets[nt]
+            num_nodes = x_dict[nt].size(0)
+            out_x_dict[nt] = x_global[offset : offset + num_nodes]
+
+        return out_x_dict, all_layer_attentions
 
 class GraphSageEncoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, aggr='sum'):
