@@ -2,6 +2,7 @@
 
 """Carry out Radical search to identify extreme samples in the dataset and give them a single sample score."""
 
+import pandas._typing as pdt
 import argparse
 import os
 from typing import Callable, Optional, List, Tuple, Any
@@ -16,7 +17,6 @@ from scipy.interpolate import interp1d
 from statsmodels.distributions.empirical_distribution import ECDF
 from tqdm import tqdm
 import pandera.typing as pat
-
 
 def do_radical_search(
         data: pd.DataFrame,
@@ -38,7 +38,7 @@ def do_radical_search(
     if all(s in data.columns for s in design.index[:5]):
         data_transpose = data.transpose()
     else:
-        data_transpose = data
+        data_transpose = data.copy()
     print(f"Transposed data shape: {data_transpose.shape}, supposed to be [sample, gene]")
     # Give each label an integer to represent the labels during classification
     label_mapping = {
@@ -107,10 +107,16 @@ def do_radical_search(
                 if patient_position_in_distribution > upper_thresh:
                     output_df.loc[patient_index, feature] = 1
 
-    output_df.columns = data.index
-    output_df.index = data.columns
-    print('output_df columns:', output_df.columns)
+    if all(s in data.columns for s in design.index[:5]):
+        # Data was transposed: Rows are samples (data.columns), Columns are genes (data.index)
+        output_df.index = data.columns
+        output_df.columns = data.index
+    else:
+        # Data was NOT transposed
+        output_df.index = data.index
+        output_df.columns = data.columns
 
+    print('output_df columns:', output_df.columns)
     summary_df = output_df.apply(pd.Series.value_counts)
 
     # Add labels to the data samples
@@ -157,26 +163,14 @@ def _apply_func(
         df: pd.DataFrame,
         func_list: npt.NDArray[Any]
 ) -> pd.DataFrame:
-    """Apply functions from the list (in order) on the respective column.
+    """Apply functions from the list (in order) on the respective column."""
+    final_df = pd.DataFrame(index=df.index) # Keep the sample index intact
 
-    :param df: Data on which the functions need to be applied
-    :param func_list: List of functions to be applied
-    :return: Dataframe which has been processed
-    """
-    final_df = pd.DataFrame()
-
-    new_columns = [index for index, _ in enumerate(df.columns)]
-    old_columns = list(df.columns)
-
-    df.columns = pd.Index(new_columns)
-
-    for idx, i in enumerate(tqdm(df.columns, desc='Searching for radicals: ')):
-        final_df[i] = np.apply_along_axis(func_list[idx], 0, df[i].values)  # type: ignore
-
-    final_df.columns = pd.Index(old_columns)
+    # Use enumerate on original columns without renaming them
+    for idx, col_name in enumerate(tqdm(df.columns, desc='Searching for radicals: ')):
+        final_df[col_name] = np.apply_along_axis(func_list[idx], 0, df[col_name].values)  # type: ignore
 
     return final_df
-
 
 def do_biological_logfc(
     data: pd.DataFrame,
@@ -477,8 +471,11 @@ def main():
 
     # Load data
     data = pd.read_csv(args.data, index_col=0)
-    design = pd.read_csv(args.design, index_col=0, sep='\t')
-    design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
+    try:
+        design = pd.read_csv(args.design, index_col=0, sep='\t')
+        design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
+    except:
+        design = pd.read_csv(args.design, index_col=0)
 
     # Mapping methods
     method_map = {
