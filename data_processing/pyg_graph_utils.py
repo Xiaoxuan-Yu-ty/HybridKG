@@ -163,82 +163,83 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
     print(f"HeteroData created: {len(data.node_types)} node types, {len(data.static_edge_types) + len(data.dynamic_edge_types)} edge types.")
     return data, node_mappings
 
-
-
 def get_relation(edge):
-    u,v,key,attr = edge
-
-    if isinstance(key, int):
-        relation = attr.get('type') or attr.get('rel') or attr.get('relation')
-    elif isinstance(key, str):
-        relation = key
-    else:
-        relation=None
+    u, v, key, attr = edge
+    
+    # If the key is our custom 'rev_...' string, that IS the relation
+    if isinstance(key, str) and key.startswith('rev_'):
+        return key 
+    
+    # Otherwise, check attributes
+    relation = attr.get('relation') or attr.get('rel') or attr.get('type') or (key if isinstance(key, str) else None)
     
     return relation
 
-def add_reverse_edges(kg):
-    """
-    Optionally adding reverse edges if not existing.
+def normalize_kg(kg: nx.MultiDiGraph):
+    new_kg = nx.MultiDiGraph()
     
-    Args:
-        kg: The input MultiDiGraph.
-    """
-    
-    # 1. Collect all edge types (for reporting/inspection)
-    all_rel_types = set()
-    for edge in kg.edges(data=True, keys=True):
-        relation = get_relation(edge)
-        #print('extracted relation:', relation)
-        all_rel_types.add(relation)
-    print(f"Found {len(all_rel_types)} initial unique relations: {all_rel_types}")
+    # 1. Standardize Nodes
+    for node, data in kg.nodes(data=True):
+        # Infer the label: look for 'label' or 'type', fallback to 'Unknown'
+        label = data.get('label') or data.get('type') or 'Unknown'
+        
+        # Keep everything EXCEPT the old 'label'/'type' keys
+        new_data = {k: v for k, v in data.items() if k not in ['label', 'type']}
+        new_data['label'] = label
+        new_kg.add_node(node, **new_data)
+        
+    # 2. Standardize Edges
+    for u, v, key, attrs in kg.edges(data=True, keys=True):
+        # Extract the relation name from existing messy keys/attrs
+        if isinstance(key, str) and key not in ['0', '1', '2']: # Check if key is a name
+            relation = key
+        else:
+            relation = attrs.get('relation') or attrs.get('rel') or attrs.get('type') or 'unknown'
+        
+        excluded = {'relation', 'rel', 'type'}
+        new_attrs = {k: v for k, v in attrs.items() if k not in excluded}
+        
+        # Add the standardized 'relation' key
+        new_attrs['relation'] = relation
+        
+        # Add to new graph
+        new_kg.add_edge(u, v, key=relation, **new_attrs)
+        
+    return new_kg
 
-    # 2. Create Reversed KG
+
+def add_reverse_edges(kg: nx.MultiDiGraph):
     reversed_kg = copy.deepcopy(kg)
-
+    
+    # Track sizes explicitly
+    initial_edge_count = reversed_kg.number_of_edges()
     added_rev_count = 0
-    # Use list() to avoid "dictionary changed size during iteration" error
-    edges_to_process = list(kg.edges(data=True, keys=True))
-
-    for edge in tqdm(edges_to_process, desc="Checking/Adding reverse edges"):
-        u,v,key,attrs = edge
-        relation = get_relation(edge)
-        # skip patient-patient
-        if relation == 'similar' or (relation and relation.startswith('rev_')):
+    
+    for u, v, key, attrs in list(kg.edges(data=True, keys=True)):
+        relation = get_relation((u, v, key, attrs))
+        if v == u or relation == 'similar' or (relation and relation.startswith('rev_')):
             continue
 
         rev_rel = f"rev_{relation}"
         
-        # Check if a reverse edge already exists
-        # for a MultiDiGraph, check all edges between v and u
+        # SAFE CHECK: Use .has_edge() first
         has_rev = False
-        if reversed_kg.has_edge(v, u) and v != u:
-            edge_dict = reversed_kg[v][u]
-            for etype_key, existing_attrs in edge_dict.items():
-                
-                existing_rel = existing_attrs.get('relation') or existing_attrs.get('rel') or existing_attrs.get('type')
-                # If all return None, you can provide a fallback
-                if existing_rel is None:
-                    existing_rel = etype_key
-            
-                if existing_rel == rev_rel:
-                    has_rev = True
-                    break
-            
-                #print(f"Found edge {v} -> {u}: {edge_dict}\n, edge type:{exisiting_rel}, {u}->{v} edge:{relation}")
-                  
+        if reversed_kg.has_edge(v, u):
+            # Now it is safe to access the edge dictionary
+            if rev_rel in reversed_kg[v][u]:
+                has_rev = True
+        
         if not has_rev:
-            
-            #print(f"Add reverse edge {(v,rev_rel,u)} to KG")
-            reversed_kg.add_edge(v, u, relation=rev_rel)
+            new_attrs = {k: v for k, v in attrs.items() if k not in ['type','rel','relation']}
+            new_attrs['relation'] = rev_rel
+            reversed_kg.add_edge(v, u, key=rev_rel, **new_attrs)
             added_rev_count += 1
-
-    print(f"Added {added_rev_count} reverse edges.")
+            
+    final_edge_count = reversed_kg.number_of_edges()
+    print(f"Initial: {initial_edge_count}, Final: {final_edge_count}")
+    print(f"Diff: {final_edge_count - initial_edge_count}, Logged Adds: {added_rev_count}")
     
     return reversed_kg
-
-
-
 
 
 
