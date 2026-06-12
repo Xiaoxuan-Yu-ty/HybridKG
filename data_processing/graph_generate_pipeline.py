@@ -17,13 +17,13 @@ def get_kg_disease_path(kg)->str:
     
     path = ''
     if kg == 'PPI_old':
-        path = "../datasets/base_kgs/oldcleaned_ppi_kg.pkl"
+        path = "../datasets/base_kgs/ppi_old_with_reverse_edges.pkl"
     elif kg == 'PPI_new':
-        path = "../datasets/base_kgs/ppi_hc.pkl"
+        path = "../datasets/base_kgs/ppi_new_with_reverse_edges.pkl"
     elif kg == 'Prime_KG':
-        path = "../datasets/base_kgs/prime_ad_kg.pkl"
+        path = "../datasets/base_kgs/prime_kg_with_reverse_edges.pkl"
     elif kg == 'AD_KG':
-        path = "../datasets/base_kgs/ad_network_with_reverse_edges.pkl"
+        path = "../datasets/base_kgs/ad_kg_with_reverse_edges.pkl"
     else:
         raise FileExistsError
     return path
@@ -35,10 +35,10 @@ def parser():
     parser.add_argument("--DiseaseKG", type=str, nargs="+", 
                         default=['PPI_old','PPI_new','Prime_KG','AD_KG'],
                         help="The Disease_KG to map")
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/oldcleaned_ppi_kg.pkl", 
+    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/ad_kg_with_reverse_edges.pkl", 
                        help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, 
-                        default="../datasets/base_kgs/healthy_aging_reversed_remove_noncausal.pkl", 
+                        default="../datasets/base_kgs/healthy_kg_with_reverse_edges.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
     parser.add_argument("--output_dir", type=str, default="../datasets/ADNI_KGs", 
                         help="Directory to save generated networks.")
@@ -120,21 +120,6 @@ def main():
     
         print(f"\n{kg_disease} generating Complete.")
         print(f"Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
-
-    # graph_output = os.path.join(scoring_output, 'Healthy_KG')
-    # network, graph_df, summary = generat_and_save_hybrid(
-    #     exp_path=args.exp_path,
-    #     scoring_path=scoring_path,
-    #     kg_disease_path=args.kg_disease_path,
-    #     kg_health_path=args.kg_healthy,
-    #     output_dir=graph_output,
-    #     process_method="HealthyKG",
-    #     scoring_method=args.scoring_type,
-    #     dataset=args.dataset
-    # )
-
-    # print(f"\nHealthy_KG generating Complete.")
-    # print(f"Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
 
     
 if __name__=="__main__":
