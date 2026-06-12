@@ -39,7 +39,7 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
     
     # 1. Categorize Nodes and Map Indices
     for node, attrs in G.nodes(data=True):
-        n_type = attrs.get('type')
+        n_type = attrs.get('type') or attrs.get('label')
         
         if n_type not in node_mappings:
             node_mappings[n_type] = {}
@@ -81,8 +81,8 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
     dynamic_edges = {}
 
     for u, v, r, attrs in G.edges(keys=True, data=True):
-        u_type = G.nodes[u].get('type')
-        v_type = G.nodes[v].get('type')
+        u_type = G.nodes[u].get('type') or G.nodes[u].get('label')
+        v_type = G.nodes[v].get('type') or G.nodes[v].get('label')
         if not isinstance(r, str):
             rel = attrs.get('relation') or attrs.get('rel') or attrs.get('type')
         else:

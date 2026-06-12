@@ -26,6 +26,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 from utils.graph_utils import load_graph, save_graph
+from data_processing.pyg_graph_utils import add_reverse_edges
 
 
 def add_patient_attrs(G:nx.MultiGraph,
@@ -584,7 +585,10 @@ def generat_and_save_hybrid(exp_path:str,
         network = merge_2kg(G=network_d, H=network_h)
     else:
         raise ValueError("Invalid process_method, please choose from ['hybrid','DiseaseKG','HealthyKG']")
-        
+
+    # add reverse edges to network if not existing
+    network = add_reverse_edges(network)  
+    
     # 3. Convert network to triples: edgelist df
     graph_df = nx.to_pandas_edgelist(network)
     graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
