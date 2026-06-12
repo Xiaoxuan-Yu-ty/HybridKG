@@ -22,7 +22,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 from utils.graph_utils import load_graph, save_graph
-from data_processing.patient_network_prep import (causal_relations, 
+from data_processing.pyg_graph_utils import (causal_relations, 
                                                   process_kg_for_gnn,
                                                   sanitize_node_types)
 

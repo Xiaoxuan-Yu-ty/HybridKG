@@ -23,7 +23,7 @@ try:
 except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
-from data_processing.patient_network_prep import convert_to_hetero_data
+from data_processing.pyg_graph_utils import convert_to_hetero_data
 from EdgeAssignmentTask.hetero_base_models.base_models import get_model
 
 

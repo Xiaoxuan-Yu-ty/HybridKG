@@ -26,6 +26,7 @@ except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
 from utils.graph_utils import load_graph, save_graph
+from data_processing.pyg_graph_utils import add_reverse_edges
 
 
 def add_patient_attrs(G:nx.MultiGraph,
@@ -166,8 +167,8 @@ def build_knn_graph_with_masks(features_df, labels_series, k=8, metric='cosine',
     for u, v, w in edge_list:
         if tuple(sorted((u, v))) not in edges_to_remove:
             # add edges in both directions to simulate undirected similarity
-            G.add_edge(u, v, relation='similar', weight=float(w))
-            G.add_edge(v, u, relation='similar', weight=float(w))
+            G.add_edge(u, v, key='similar', relation='similar',weight=float(w))
+            G.add_edge(v, u, key='similar', relation='similar',weight=float(w))
             
     return G
 
@@ -292,8 +293,8 @@ class PatientNetworkGenerator:
                 weight_value = float(exp_df.loc[patient, symbol])
                 
                 # Use relation as the 'key' for MultiDiGraph edges
-                overlay_graph.add_edge(patient, protein_node, relation=rel, weight=weight_value, label=patient_labels[patient])
-                overlay_graph.add_edge(protein_node, patient, relation=f'rev_{rel}', weight=weight_value,label=patient_labels[patient])
+                overlay_graph.add_edge(patient, protein_node, key=rel, relation=rel, weight=weight_value, label=patient_labels[patient])
+                overlay_graph.add_edge(protein_node, patient, key=f'rev_{rel}', relation=f'rev_{rel}',weight=weight_value,label=patient_labels[patient])
                 
                 col = 'pos_edges' if int(val) == 1 else 'neg_edges'
                 summary_df.at[patient, col] += 1
@@ -380,8 +381,8 @@ class PatientNetworkGenerator:
                 weight = float(exp_df.loc[patient, symbol])
 
                 for target_node in target_nodes:
-                    full_graph.add_edge(patient, target_node, relation=rel, weight=weight)
-                    full_graph.add_edge(target_node, patient, relation=f'rev_{rel}', weight=weight)
+                    full_graph.add_edge(patient, target_node, key=rel,relation=rel, weight=weight)
+                    full_graph.add_edge(target_node, patient, key=rel,relation=f'rev_{rel}', weight=weight)
                     
                     # Update summary_df
                     col = 'pos_edges' if int(val) == 1 else 'neg_edges'
@@ -476,8 +477,8 @@ class PatientNetworkGenerator:
                 for target_node in map_disease[symbol]:
                     rel = rel_map_disease.get(direction)
                     
-                    full_graph.add_edge(patient, target_node, relation=rel, weight=weight)
-                    full_graph.add_edge(target_node, patient, relation=f'rev_{rel}', weight=weight)
+                    full_graph.add_edge(patient, target_node, key=rel, relation=rel, weight=weight)
+                    full_graph.add_edge(target_node, patient, key=rel, relation=f'rev_{rel}', weight=weight)
                     
                     # Update metrics
                     col = 'pos_edges_disease' if direction == 1 else 'neg_edges_disease'
@@ -489,8 +490,8 @@ class PatientNetworkGenerator:
                 for target_node in map_control[symbol]:
                     rel = rel_map_healthy.get(direction)
                     
-                    full_graph.add_edge(patient, target_node, relation=rel, weight=weight)
-                    full_graph.add_edge(target_node, patient, relation=f'rev_{rel}', weight=weight)
+                    full_graph.add_edge(patient, target_node, key=rel, relation=rel, weight=weight)
+                    full_graph.add_edge(target_node, patient, key=rel, relation=f'rev_{rel}', weight=weight)
                     
                     # Update metrics
                     col = 'pos_edges_healthy' if direction == 1 else 'neg_edges_healthy'
@@ -584,7 +585,10 @@ def generat_and_save_hybrid(exp_path:str,
         network = merge_2kg(G=network_d, H=network_h)
     else:
         raise ValueError("Invalid process_method, please choose from ['hybrid','DiseaseKG','HealthyKG']")
-        
+
+    # add reverse edges to network if not existing
+    network = add_reverse_edges(network)  
+    
     # 3. Convert network to triples: edgelist df
     graph_df = nx.to_pandas_edgelist(network)
     graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
