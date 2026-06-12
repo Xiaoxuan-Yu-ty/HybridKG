@@ -159,7 +159,7 @@ def parser():
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/networks/PPI_KGs", 
+    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/myADNI/PPI_KGs", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
