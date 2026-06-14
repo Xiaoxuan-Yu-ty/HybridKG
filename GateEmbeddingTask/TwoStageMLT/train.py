@@ -25,7 +25,8 @@ try:
 except NameError:
     base_dir = os.getcwd()
 sys.path.append(os.path.dirname(base_dir))
-
+from data_processing.pyg_graph_generator import generat_and_save_hybrid
+from data_processing.sample_scoring import *
 from train_utils import (
     compute_link_loss, 
     evaluate_link,
@@ -553,8 +554,8 @@ def parse():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--negative_sampling_ratio", type=float, default=0.1)
-    parser.add_argument("--num_negative", type=int, default=100)
-    parser.add_argument("--pos_cap", type=int, default=100)
+    parser.add_argument("--num_negatives", type=int, default=100)
+    parser.add_argument("--pos_sample_cap", type=int, default=100)
 
     # Dynamic Scheduling Settings
     parser.add_argument("--schedule_type", type=str, default="linear", choices=["constant", "linear", "cosine"],
@@ -612,7 +613,10 @@ def main():
 
     # 3. Retrain with best hyperparameters (Cross Validation)
     print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
-    final_results, attention_archive = hpo_cross_validate(data, study.best_params, args, device)
+    final_results, attention_archive = hpo_cross_validate(data, 
+                                                          study.best_params, 
+                                                          args, 
+                                                          device)
 
     # Calculate Average Final Metrics
     avg_metrics = {}

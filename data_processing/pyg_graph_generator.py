@@ -254,10 +254,12 @@ class PatientNetworkGenerator:
         # 1. Force base_graph to MultiDiGraph and copy
         if base_graph == 'disease':
             self.base_graph = self.kg_disease
+            self.relation_map = {1: f'up_reg_d', -1: f'down_reg_d'}
         else:
             self.base_graph = self.kg_healthy
+            self.relation_map = {1: f'up_reg_h', -1: f'down_reg_h'}
         
-        self.relation_map = {1: f'up_reg', -1: f'down_reg'}
+        #self.relation_map = {1: f'up_reg', -1: f'down_reg'}
 
         overlay_graph = nx.MultiDiGraph(self.base_graph).copy()
         
