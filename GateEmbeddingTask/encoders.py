@@ -289,7 +289,7 @@ class RGCNEcoder(BaseHeteroEncoder):
         edge_type_list = []
         
         for etype, edge_index in edge_index_dict.items():
-            if edge_index.num_edges > 0:
+            if edge_index.size(1) > 0:
                 src_nt, _, dst_nt = etype
                 # Map local node IDs to global space using offsets
                 src_offset = node_offsets[src_nt]

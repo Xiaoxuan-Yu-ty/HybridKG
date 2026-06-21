@@ -61,9 +61,9 @@ def parse():
     parser.add_argument("--output_dir", type=str, default="./GateEmbeddingTask/TwoStageMLT/results")
     parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
-    parser.add_argument("--encoder_type", type=str, default='rgcn', 
+    parser.add_argument("--encoder_type", type=str, default='rgat', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--aggregator_type", type=str, default='rgcn',
+    parser.add_argument("--aggregator_type", type=str, default='rgat',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--decoder_type", type=str, default='distmult',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],

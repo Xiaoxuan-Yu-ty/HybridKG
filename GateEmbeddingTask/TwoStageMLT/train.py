@@ -461,7 +461,7 @@ def hpo_cross_validate(data, best_params, args, device):
     final_results = {}
     attention_archive = {} # Store attention weights across folds
     
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=args.seed)
     y_all = data['Patient'].y.cpu().numpy()
     num_classes = max(y_all) + 1
     
