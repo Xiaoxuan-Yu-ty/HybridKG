@@ -68,3 +68,6 @@ CLEP_repeat/logs/train_3623178.out
 CLEP_repeat/logs/train_3623179.err
 CLEP_repeat/logs/train_3623179.out
 GateEmbeddingTask/torch.md
+environment.yml
+test_import.py
+test_peter.sh
