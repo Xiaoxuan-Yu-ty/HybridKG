@@ -38,20 +38,20 @@ def parse():
     parser = argparse.ArgumentParser(description="Two Stage Multi-Task-Learning Model HPO & Training Pipeline")
 
     # Generate Network
-    parser.add_argument("--DiseaseKG", type=str, default='PPI_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
+    parser.add_argument("--DiseaseKG", type=str, default='AD_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
     parser.add_argument("--kg_disease", type=str, default="./datasets/base_kgs/ad_kg_with_reverse_edges.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="./datasets/base_kgs/healthy_kg_with_reverse_edges.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
 
     # Argument for sample scoring and network generation
-    parser.add_argument("--exp_path", type=str, default="./data/ADNI/adni_exp_realcleaned.csv", 
+    parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
     parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
     parser.add_argument("--control", default=0, 
                         help="Control group label")
-    parser.add_argument("--threshold", type=str, default=5,
+    parser.add_argument("--threshold", type=str, default=2.5,
                         choices=[1, 1.5, 2.5, 5, 10, 20],
                         help="The threshold used for ecdf sample scoring")
     parser.add_argument("--graph_method", type=str, default="merge", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
@@ -61,9 +61,9 @@ def parse():
     parser.add_argument("--output_dir", type=str, default="./GateEmbeddingTask/TwoStageMLT/results")
     parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
-    parser.add_argument("--encoder_type", type=str, default='rgat', 
+    parser.add_argument("--encoder_type", type=str, default='hrgat', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--aggregator_type", type=str, default='rgat',
+    parser.add_argument("--aggregator_type", type=str, default='hrgat',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--decoder_type", type=str, default='distmult',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
@@ -71,12 +71,12 @@ def parse():
 
     # Model parameters
     parser.add_argument("--hpo", action="store_true", help="Enable HPO Process")
-    parser.add_argument("--hidden_channels", type=int, default=128)
-    parser.add_argument("--out_channels", type=int, default=2)
-    parser.add_argument("--att_channels", type=int, default=32)
+    parser.add_argument("--hidden_channels", type=int, default=256)
+    parser.add_argument("--out_channels", type=int, default=128)
+    parser.add_argument("--att_channels", type=int, default=64)
     parser.add_argument("--heads", type=int, default=1)
     parser.add_argument("--num_layers", type=int, default=3)
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
@@ -212,13 +212,14 @@ def main():
         with open(os.path.join(final_output_dir, "best_hpo_params.json"), "w") as f:
             json.dump(study.best_params, f, indent=4)
 
-        # 3. Retrain with best hyperparameters (Cross Validation)
+        # 3.3. Retrain with best hyperparameters (Cross Validation)
         print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
         final_results, attention_archive = hpo_cross_validate(data, 
                                                             study.best_params, 
                                                             args, 
                                                             device)
     else:
+        # 3.3. Retrain with best hyperparameters (Cross Validation)
         print("\n--- Starting training with (best) hyperparameters (Cross Validation) ---")
         hyperparameters = {
             "hidden_channels": args.hidden_channels,

@@ -48,6 +48,7 @@ def parser():
     parser.add_argument("--kge_hpo", action="store_true", help="Enable KGE HPO Process.")
     parser.add_argument("--kge_model", type=str, default="RotatE")
     # CLS arguments
+    parser.add_argument("--cls_only", action="store_true", help="Enable Classification on raw GE data")
     parser.add_argument("--cls_model", type=str, nargs="+",#default='logistic_regression', 
                             default=['logistic_regression',
                                 'elastic_net',
@@ -74,7 +75,7 @@ def main():
     if args.cls_only:
         data['label'] = design['Target'].to_list()
         embeddings = data
-        
+
         overall_output = args.output_dir
         kge_output = os.path.join(overall_output, 'raw')
         os.makedirs(kge_output, exist_ok=True)

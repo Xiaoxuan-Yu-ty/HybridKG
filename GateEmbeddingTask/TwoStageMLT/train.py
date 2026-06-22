@@ -187,7 +187,7 @@ def train_epoch(model:TwoStageModel,
                 optimizer, 
                 negative_sampling_ratio:float, 
                 device, 
-                lambda_link=0.1):
+                lambda_cls=0.1):
     model.train()
     optimizer.zero_grad()
 
@@ -213,15 +213,15 @@ def train_epoch(model:TwoStageModel,
     cls_loss = F.cross_entropy(y_pred, y_true)
     
     
-    loss = cls_loss + lambda_link*link_loss
+    loss = lambda_cls*cls_loss + link_loss
 
     loss.backward()
     optimizer.step()
 
     loss_result = {'Total_loss': float(loss),
-                                   'LP_loss': float(link_loss),
-                                   'Cls_loss': float(cls_loss),
-                                   }
+                    'LP_loss': float(link_loss),
+                    'Cls_loss': float(cls_loss),
+                    }
 
     return loss_result
 
@@ -254,11 +254,8 @@ def evaluate_cls(model, data, mask_name):
         'AUPRC': float(average_precision_score(y_true, prob))
     }
     
-    # Extract only the attention weights for the evaluated nodes
-    masked_attention = None
-    if attention_weights is not None:
-        # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
-        masked_attention = attention_weights 
+    # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
+    masked_attention = attention_weights 
         
     return metrics, masked_attention
 
@@ -293,9 +290,9 @@ def train(model,
     eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1) if is_hpo else data.static_edge_index_dict
 
     for epoch in tqdm(range(epochs), desc="Training Model"):
-        current_lambda_link = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
+        current_lambda_cls = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
         
-        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_link)
+        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_cls)
         
         train_metrics, _ = evaluate_cls(model, data, 'train_mask')
         val_metrics, _ = evaluate_cls(model, data, 'val_mask')
@@ -461,7 +458,7 @@ def hpo_cross_validate(data, best_params, args, device):
     final_results = {}
     attention_archive = {} # Store attention weights across folds
     
-    skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=args.seed)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
     y_all = data['Patient'].y.cpu().numpy()
     num_classes = max(y_all) + 1
     
