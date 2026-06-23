@@ -89,10 +89,10 @@ def objective( trial: optuna.trial.Trial,
               eval_pos_cap: Optional[int], ) -> float: 
     """Optuna objective that maximizes Hits@K on the validation split.""" 
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True) 
-    hidden_channels = trial.suggest_categorical( "hidden_channels", [32, 64, 128] ) 
+    hidden_channels = trial.suggest_categorical( "hidden_channels", [64, 128,256] ) 
     att_channels = trial.suggest_categorical( "att_channels", [32, 64, 128] ) 
-    out_channels = trial.suggest_categorical("out_channels", [16, 32, 64]) 
-    dropout_rate = trial.suggest_float("dropout", 0.1, 0.6) 
+    out_channels = trial.suggest_categorical("out_channels", [32, 64,128]) 
+    dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.6) 
     heads = trial.suggest_categorical("heads", [2, 4]) 
     weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True) 
     negative_ratio = trial.suggest_float("negative_ratio", 1.0, 5.0) 
@@ -165,17 +165,16 @@ def objective( trial: optuna.trial.Trial,
         # Ensure any async CUDA ops finish before creating CPU embeddings
         torch.cuda.synchronize() if device.type.startswith("cuda") else None
         with torch.no_grad(): 
-            embeddings = model.encode( to_device_edge_index_dict(train_edges, device) ) 
+            embeddings = model(data.x_dict, to_device_edge_index_dict(train_edges, device) ) 
             embeddings_cpu = { node_type: tensor.cpu() for node_type, tensor in embeddings.items() } 
         save_path = os.path.join(output_dir, f"embeddings_trial_{trial.number}.pt") 
         torch.save(embeddings_cpu, save_path) 
         
         # Save CPU-copy of model state dict (best)
         cpu_best_state = {k: v.cpu() for k, v in best_state.items()}
-        trial.set_user_attr("model_state_dict", cpu_best_state)
-        torch.save(cpu_best_state, os.path.join(output_dir, f"model_weight_trial_{trial.number}.pt"))
+        checkpoint_path = os.path.join(output_dir, f"model_weight_trial_{trial.number}.pt")
+        torch.save(cpu_best_state, checkpoint_path)
 
-        
         return best_val_hits
     
     finally:
@@ -311,7 +310,7 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=100, help="Number of trials for HPO process.")
+    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -337,7 +336,7 @@ def parse():
                                 # 'random_forest',
                                 # 'gradient_boost',
                                 ])
-    parser.add_argument("--n_jobs", type=int, default=1,
+    parser.add_argument("--n_jobs", type=int, default=2,
                         help="Number of Optuna HPO parallel jobs")
 
     # Hardware & Seeding
@@ -468,10 +467,10 @@ def main():
                                                  device=device,
                                                  encoder_type=args.encoder_type,
                                                  decoder_type=args.decoder_type,
-                                                 num_layers=3,
+                                                 num_layers=args.num_layers,
                                                  output_dir=final_output_dir,
                                                  k=10,
-                                                 max_epochs=100,
+                                                 max_epochs=args.epochs,
                                                  patience=50,
                                                  eval_negatives=500,
                                                  eval_pos_cap=0,
@@ -487,7 +486,7 @@ def main():
             json.dump(study.best_params, f, indent=4)
 
         # 3. Retrain with best hyperparameters (Cross Validation)
-        print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
+        print("\n--- Starting Retrain with best hyperparameters ---")
         test_hits,all_embeddings = train_final_model(data=data,
                                          train_edges=train_edges,
                                          val_edges=val_edges,
@@ -496,7 +495,7 @@ def main():
                                          best_params=study.best_params,
                                          encoder_type=args.encoder_type,
                                          decoder_type=args.decoder_type,
-                                         num_layers=3,
+                                         num_layers=args.num_layers,
                                          device=device,
                                          output_dir=final_output_dir,
                                          k=10,
@@ -544,28 +543,31 @@ def main():
         print(f"\ntest hits@10: {test_hits}")
         
     # 4. do classification
-        print("\n-------------Run Classification HPO---------------------------------------------")
-        h_patient = all_embeddings['Patient']
-        embeddings = pd.DataFrame(h_patient, columns=[f'embedding_{i}' for i in range(h_patient.size(1))])
-        embeddings['label'] = data['Patient'].y.cpu().numpy()
+    print("\n-------------Run Classification HPO---------------------------------------------")
+    h_patient = all_embeddings['Patient']
+    embeddings = pd.DataFrame(h_patient, columns=[f'embedding_{i}' for i in range(h_patient.size(1))])
+    embeddings['label'] = data['Patient'].y.cpu().numpy()
+    embeddings.to_csv(os.path.join(final_output_dir, "embeddings.csv"))
 
-        for model_name in args.cls_model:
-            db_url = f"sqlite:///{final_output_dir}/optuna_cls.db"
-            cls_output = os.path.join(final_output_dir, 'cls_result', model_name)
-            os.makedirs(cls_output, exist_ok=True)
-            print(f"\n--- Running Classification HPO with model {model_name}---")
-            
-            cv_results = do_classification(
-                data=embeddings,
-                model_name=model_name,
-                out_dir=cls_output,
-                validation_cv=5,
-                scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
-                rand_labels=False,
-                mysql_url=db_url,
-                num_processes=args.n_jobs,
-                num_trials=args.num_trial
-            )
+    for model_name in args.cls_model:
+        cls_output = os.path.join(final_output_dir, 'cls_result', model_name)
+        os.makedirs(cls_output, exist_ok=True)
+
+        db_url = f"sqlite:///{cls_output}/optuna_cls.db"
+        
+        print(f"\n--- Running Classification HPO with model {model_name}---")
+        
+        cv_results = do_classification(
+            data=embeddings,
+            model_name=model_name,
+            out_dir=cls_output,
+            validation_cv=5,
+            scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
+            rand_labels=False,
+            mysql_url=db_url,
+            num_processes=args.n_jobs,
+            num_trials=args.num_trial
+        )
     
 if __name__ == "__main__":
     main()     

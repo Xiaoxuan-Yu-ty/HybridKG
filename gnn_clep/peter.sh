@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=GNNClep(primekg)
+#SBATCH --job-name=ad_gnn
 #SBATCH --output=peter_logs/train_%j.out
 #SBATCH --error=peter_logs/train_%j.err
 #SBATCH --time=48:00:00
@@ -29,7 +29,7 @@ cd "/home/xyu/thesis/HybridKG/"
  
 export CUDA_LAUNCH_BLOCKING=1
 
-KG="Prime_KG"
+KG="AD_KG"
 AD_PATH="./datasets/base_kgs/ad_kg_with_reverse_edges.pkl"
 PPI_PATH="./datasets/base_kgs/ppi_old_with_reverse_edges.pkl"
 PRIME_PATH="./datasets/base_kgs/prime_kg_with_reverse_edges.pkl"
@@ -40,7 +40,11 @@ echo "$(date +"%D %T")"
 echo "Python path: $(which python)"
 echo "---------------------------------------------------------------------"
 
-/home/xyu/.conda/envs/firegnn/bin/python -m gnn_clep.train --DiseaseKG "$KG" --kg_disease "$PRIME_PATH" --epochs 200
+/home/xyu/.conda/envs/firegnn/bin/python -m gnn_clep.train \
+    --DiseaseKG "$KG" \
+    --kg_disease "$AD_PATH" \
+    --epochs 200 \
+    --num_trials 100
 
 echo "---------------------------------------------------------------------"
 echo "$(date +"%D %T")"
