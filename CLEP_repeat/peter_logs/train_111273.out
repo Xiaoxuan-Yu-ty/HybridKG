@@ -1,0 +1,11 @@
+=====================================================================
+Running Testing import script
+06/23/26 15:59:30
+Python path: /opt/software/easybuild/genoa/software/Miniforge3/24.11.3-0/bin/python
+---------------------------------------------------------------------
+
+-------------Run Classification HPO---------------------------------------------
+
+--- Running Classification HPO with model logistic_regression---
+
+--- Running Classification HPO with model elastic_net---

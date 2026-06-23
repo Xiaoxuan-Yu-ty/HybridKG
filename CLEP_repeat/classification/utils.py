@@ -84,40 +84,144 @@ class OptunaObjective:
         match self.classifier:
             case 'LogisticRegression':
                 C = trial.suggest_float('C', 1e-6, 1e+6, log=True)
-
                 clf_params = {'C': C}
-                clf = LogisticRegression(C=C, solver='lbfgs', max_iter=5000, **self.classifier_params)
+                clf = LogisticRegression(
+                    C=C,
+                    solver='lbfgs',
+                    max_iter=5000,
+                    **self.classifier_params
+                )
+
             case 'ElasticNet':
                 C = trial.suggest_float('C', 1e-6, 1e+6, log=True)
                 l1_ratio = trial.suggest_float('l1_ratio', 0.0, 1.0)
-
                 clf_params = {'C': C, 'l1_ratio': l1_ratio}
-                clf = LogisticRegression(C=C, solver='saga', l1_ratio=l1_ratio, max_iter=5000, **self.classifier_params)
+                clf = LogisticRegression(
+                    C=C,
+                    solver='saga',
+                    l1_ratio=l1_ratio,
+                    penalty='elasticnet',
+                    max_iter=5000,
+                    **self.classifier_params
+                )
+
             case 'RandomForest':
                 n_estimators = trial.suggest_int('n_estimators', 100, 1000)
-                max_features = trial.suggest_categorical('max_features', ['sqrt', 'log2'])   # ! auto does not work
+                max_features = trial.suggest_categorical('max_features', ['sqrt', 'log2'])
+                max_depth = trial.suggest_int('max_depth', 2, 32, log=True)          # NEW
+                min_samples_leaf = trial.suggest_int('min_samples_leaf', 1, 20)      # NEW
+                min_samples_split = trial.suggest_int('min_samples_split', 2, 20)    # NEW
+                
+                clf_params = {
+                    'n_estimators': n_estimators,
+                    'max_features': max_features,
+                    'max_depth': max_depth,
+                    'min_samples_leaf': min_samples_leaf,
+                    'min_samples_split': min_samples_split,
+                }
+                clf = RandomForestClassifier(
+                    n_estimators=n_estimators,
+                    max_features=max_features,
+                    max_depth=max_depth,
+                    min_samples_leaf=min_samples_leaf,
+                    min_samples_split=min_samples_split,
+                    **self.classifier_params
+                )
 
-                clf_params = {'n_estimators': n_estimators, 'max_features': max_features}
-                clf = RandomForestClassifier(n_estimators=n_estimators, max_features=max_features, **self.classifier_params)
             case 'GradientBoosting':
-                learning_rate = trial.suggest_float('learning_rate', 0.0, 1.0)
-                subsample = trial.suggest_float('subsample', 0.1, 0.9)
-                max_depth = trial.suggest_int('max_depth', 0, 10)
-                min_child_weight = trial.suggest_int('min_child_weight', 0, 25)
+                learning_rate = trial.suggest_float('learning_rate', 0.01, 0.3, log=True)
+                subsample = trial.suggest_float('subsample', 0.5, 1.0)
+                max_depth = trial.suggest_int('max_depth', 3, 10)
+                min_child_weight = trial.suggest_int('min_child_weight', 1, 10)
+                colsample_bytree = trial.suggest_float('colsample_bytree', 0.5, 1.0)  # NEW
+                gamma = trial.suggest_float('gamma', 1e-8, 1.0, log=True)             # NEW
+                reg_alpha = trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True)    # NEW
+                reg_lambda = trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True)  # NEW
+                
+                clf_params = {
+                    'learning_rate': learning_rate,
+                    'subsample': subsample,
+                    'max_depth': max_depth,
+                    'min_child_weight': min_child_weight,
+                    'colsample_bytree': colsample_bytree,
+                    'gamma': gamma,
+                    'reg_alpha': reg_alpha,
+                    'reg_lambda': reg_lambda,
+                }
+                clf = XGBClassifier(
+                    learning_rate=learning_rate,
+                    subsample=subsample,
+                    max_depth=max_depth,
+                    min_child_weight=min_child_weight,
+                    colsample_bytree=colsample_bytree,
+                    gamma=gamma,
+                    reg_alpha=reg_alpha,
+                    reg_lambda=reg_lambda,
+                    **self.classifier_params
+                )
 
-                clf_params = {'learning_rate': learning_rate, 'subsample': subsample, 'max_depth': max_depth, 'min_child_weight': min_child_weight}
-                clf = XGBClassifier(learning_rate=learning_rate, subsample=subsample, max_depth=max_depth, min_child_weight=min_child_weight, **self.classifier_params)
             case 'SVM':
                 C = trial.suggest_float('C', 1e-3, 1e+3, log=True)
                 kernel = trial.suggest_categorical('kernel', ['linear', 'rbf', 'poly'])
                 degree = trial.suggest_int('degree', 1, 5)
+                gamma = trial.suggest_categorical('gamma', ['scale', 'auto'])         # NEW
+                
+                clf_params = {'C': C, 'kernel': kernel, 'degree': degree, 'gamma': gamma}
+                
+                clf = SVC(
+                    C=C,
+                    kernel=kernel,
+                    degree=degree,
+                    gamma=gamma,
+                    **self.classifier_params
+                )
 
-                clf_params = {'C': C, 'kernel': kernel, 'degree': degree}
-                clf = SVC(C=C, kernel=kernel, degree=degree, **self.classifier_params)
             case _:
                 raise ValueError("Invalid classifier specified.")
 
         return clf, clf_params
+
+    # def _get_clf(self, trial):
+    #     clf = None
+    #     clf_params = {}
+    #     match self.classifier:
+    #         case 'LogisticRegression':
+    #             C = trial.suggest_float('C', 1e-6, 1e+6, log=True)
+
+    #             clf_params = {'C': C}
+    #             clf = LogisticRegression(C=C, solver='lbfgs', max_iter=5000, **self.classifier_params)
+    #         case 'ElasticNet':
+    #             C = trial.suggest_float('C', 1e-6, 1e+6, log=True)
+    #             l1_ratio = trial.suggest_float('l1_ratio', 0.0, 1.0)
+
+    #             clf_params = {'C': C, 'l1_ratio': l1_ratio}
+    #             clf = LogisticRegression(C=C, solver='saga', l1_ratio=l1_ratio, max_iter=5000, **self.classifier_params)
+    #         case 'RandomForest':
+    #             n_estimators = trial.suggest_int('n_estimators', 100, 1000)
+    #             max_features = trial.suggest_categorical('max_features', ['sqrt', 'log2'])   # ! auto does not work
+    #             max_depth = trial.suggest_int('max_depth',1,30)
+    #             clf_params = {'n_estimators': n_estimators, 'max_features': max_features}
+    #             clf = RandomForestClassifier(n_estimators=n_estimators, max_features=max_features, **self.classifier_params)
+    #         case 'GradientBoosting':
+    #             learning_rate = trial.suggest_float('learning_rate', 0.0, 1.0)
+    #             subsample = trial.suggest_float('subsample', 0.1, 0.9)
+    #             max_depth = trial.suggest_int('max_depth', 0, 10)
+    #             min_child_weight = trial.suggest_int('min_child_weight', 0, 25)
+
+    #             clf_params = {'learning_rate': learning_rate, 'subsample': subsample, 'max_depth': max_depth, 'min_child_weight': min_child_weight}
+    #             clf = XGBClassifier(learning_rate=learning_rate, subsample=subsample, max_depth=max_depth, min_child_weight=min_child_weight, **self.classifier_params)
+    #         case 'SVM':
+    #             C = trial.suggest_float('C', 1e-3, 1e+3, log=True)
+    #             kernel = trial.suggest_categorical('kernel', ['linear', 'rbf', 'poly'])
+    #             degree = trial.suggest_int('degree', 1, 5)
+    #             gamma = trial.suggest_categorical(['scale', 'auto'])
+
+    #             clf_params = {'C': C, 'kernel': kernel, 'degree': degree, "gamma":gamma}
+    #             clf = SVC(C=C, kernel=kernel, degree=degree, **self.classifier_params)
+    #         case _:
+    #             raise ValueError("Invalid classifier specified.")
+
+    #     return clf, clf_params
 
     def _get_metric(self, cv_results):
         results = []
@@ -152,7 +256,11 @@ def run_final_classification(x_train,
         cv_results = _multiclass_scorer(metrics, cv_results, y_test, y_pred, n_classes)
     else:
         cv_results = _binary_scorer(metrics, cv_results, y_test, y_pred)
-
+    
+    full_params = clf.get_params()
+    cv_results['estimator'] = full_params
+    cv_results['hpo_best_params'] = best_params
+    
     return cv_results
 
 
