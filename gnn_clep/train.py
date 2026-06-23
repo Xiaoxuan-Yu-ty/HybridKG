@@ -34,7 +34,7 @@ from GateEmbeddingTask.train_utils import (
     to_device_edge_index_dict
 )
 from gnn_clep.model import get_model
-from ML_Classifier.hpo import do_classification, run_final_classification
+from gnn_clep.ML_Classifier.hpo import do_classification, run_final_classification
 
 def train_one_epoch(
     model,
@@ -256,7 +256,7 @@ def train_final_model(
                                         ) 
 
     with torch.no_grad():
-        embeddings = model.encode(
+        embeddings = model(data.x_dict,
             to_device_edge_index_dict(combined_train_edges, device)
         )
         embeddings_cpu = {
@@ -271,7 +271,7 @@ def parse():
     parser = argparse.ArgumentParser(description="Two Stage Multi-Task-Learning Model HPO & Training Pipeline")
 
     # Generate Network
-    parser.add_argument("--DiseaseKG", type=str, default='PPI_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
+    parser.add_argument("--DiseaseKG", type=str, default='AD_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
     parser.add_argument("--kg_disease", type=str, default="./datasets/base_kgs/ad_kg_with_reverse_edges.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
     parser.add_argument("--kg_healthy", type=str, default="./datasets/base_kgs/healthy_kg_with_reverse_edges.pkl", 
@@ -294,24 +294,24 @@ def parse():
     parser.add_argument("--output_dir", type=str, default="./gnn_clep/results")
     parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
-    parser.add_argument("--encoder_type", type=str, default='rgat', 
+    parser.add_argument("--encoder_type", type=str, default='hgat', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--decoder_type", type=str, default='distmult',
+    parser.add_argument("--decoder_type", type=str, default='rotate',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
                         help='KGE model style link prediction scoring function to choose.')
 
     # Model parameters
     parser.add_argument("--hpo", action="store_true", help="Enable HPO Process")
-    parser.add_argument("--hidden_channels", type=int, default=128)
-    parser.add_argument("--out_channels", type=int, default=2)
-    parser.add_argument("--att_channels", type=int, default=32)
+    parser.add_argument("--hidden_channels", type=int, default=256)
+    parser.add_argument("--out_channels", type=int, default=128)
+    parser.add_argument("--att_channels", type=int, default=64)
     parser.add_argument("--heads", type=int, default=1)
     parser.add_argument("--num_layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--num_trial", type=int, default=100, help="Number of trials for HPO process.")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -328,6 +328,17 @@ def parse():
     # Edge split ratios
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--test_ratio", type=float, default=0.1)
+
+    # classification HP
+    parser.add_argument("--cls_model", type=str, nargs="+",#default='logistic_regression', 
+                            default=['logistic_regression',
+                                'elastic_net',
+                                # 'svm',
+                                # 'random_forest',
+                                # 'gradient_boost',
+                                ])
+    parser.add_argument("--n_jobs", type=int, default=1,
+                        help="Number of Optuna HPO parallel jobs")
 
     # Hardware & Seeding
     parser.add_argument("--seed", type=int, default=42)
@@ -492,6 +503,7 @@ def main():
                                          max_epochs=args.epochs,
                                          eval_negatives=500,
                                          eval_pos_cap=0)
+        print(f"\ntest hits@10: {test_hits}")
         
     else:
         print("\n--- Starting training with (best) hyperparameters (Cross Validation) ---")
@@ -501,7 +513,7 @@ def main():
             "att_channels": args.att_channels,
             "num_layers": args.num_layers,
             "lambda_end": args.lambda_end,
-            "dropout": args.dropout,
+            "dropout_rate": args.dropout,
             "heads": args.heads,
             "negative_slope": 0.2,
             "aggr": 'sum',
@@ -509,7 +521,8 @@ def main():
             "num_negatives": 500,
             "pos_sample_cap": 100,
             "lr":args.lr,
-            "weight_decay":args.weight_decay
+            "weight_decay":args.weight_decay,
+            'negative_ratio': 1.0
         }
 
         test_hits, all_embeddings = train_final_model(data=data,
@@ -527,10 +540,14 @@ def main():
                                          max_epochs=args.epochs,
                                          eval_negatives=500,
                                          eval_pos_cap=0)
+        print(f"\ntest hits@10: {test_hits}")
         
     # 4. do classification
         print("\n-------------Run Classification HPO---------------------------------------------")
-        embeddings = all_embeddings['Patient']
+        h_patient = all_embeddings['Patient']
+        embeddings = pd.DataFrame(h_patient, columns=[f'embedding_{i}' for i in range(h_patient.size(1))])
+        embeddings['label'] = data['Patient'].y.cpu().numpy()
+        
         for model_name in args.cls_model:
             db_url = f"sqlite:///{final_output_dir}/optuna_cls.db"
             cls_output = os.path.join(final_output_dir, 'cls_result', model_name)
@@ -546,7 +563,7 @@ def main():
                 rand_labels=False,
                 mysql_url=db_url,
                 num_processes=args.n_jobs,
-                num_trials=args.num_trials
+                num_trials=args.num_trial
             )
     
 if __name__ == "__main__":

@@ -20,14 +20,10 @@ from tqdm import tqdm
 import optuna
 from sklearn.model_selection import StratifiedKFold
 
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
+
 from data_processing.pyg_graph_generator import generat_and_save_hybrid
 from data_processing.sample_scoring import *
-from train_utils import (
+from GateEmbeddingTask.train_utils import (
     compute_link_loss, 
     evaluate_link,
     build_data_dict,
@@ -35,7 +31,8 @@ from train_utils import (
     convert_to_hetero_data,
     get_device
 )
-from TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,

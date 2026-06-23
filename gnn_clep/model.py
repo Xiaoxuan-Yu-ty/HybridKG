@@ -20,6 +20,10 @@ class LinkDecoder(nn.Module):
             if self.model_type == "transr":
                 # Projector matrix: [out_channels, out_channels]
                 self.rel_params[key] = nn.Parameter(torch.empty(out_channels, out_channels))
+            elif self.model_type == "rotate":
+                self.rel_params[key] = nn.Parameter(
+                    torch.empty(out_channels // 2)
+                )
             else:
                 # the others need projection vector
                 self.rel_params[key] = nn.Parameter(torch.empty(out_channels))
@@ -82,10 +86,14 @@ class CLEPModel(torch.nn.Module):
                  ):
         super().__init__()
         self.encoder = encoder
-        
+
+        if decoder_type in ["complex", "rotate"]:
+            assert out_channels % 2 == 0, \
+                "ComplEx and RotatE require even out_channels"
+            
         self.decoder = LinkDecoder(edge_types=data.edge_types, 
-                                                out_channels=out_channels,
-                                                model_type=decoder_type)
+                                    out_channels=out_channels,
+                                    model_type=decoder_type)
         
         self.classifier = nn.Linear(out_channels, num_classes)
 

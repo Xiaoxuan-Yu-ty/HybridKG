@@ -12,13 +12,9 @@ from torch_scatter import scatter
 
 import os
 import sys
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
-from HRGNN.HRGCNConv import HRGCNLayer
-from HRGNN.HRGATConv import HRGATLayer
+
+from GateEmbeddingTask.HRGNN.HRGCNConv import HRGCNLayer
+from GateEmbeddingTask.HRGNN.HRGATConv import HRGATLayer
 
 
 class BaseHeteroEncoder(torch.nn.Module):
