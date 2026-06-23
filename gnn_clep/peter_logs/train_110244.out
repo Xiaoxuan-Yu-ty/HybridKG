@@ -1,0 +1,35 @@
+=====================================================================
+Running GNN CLEP
+06/23/26 10:28:42
+Python path: /opt/software/easybuild/genoa/software/Miniforge3/24.11.3-0/bin/python
+---------------------------------------------------------------------
+Executing on hardware device: cuda
+
+[INFO] Loading existing graph from ./gnn_clep/results/adni/Prime_KG/ecdf_5/G_adni_DiseaseKG_ecdf.pkl
+
+----------------------------Do Model Training------------------------------
+Starting conversion from NetworkX to HeteroData...
+HeteroData created: 6 node types, 52 edge types.
+
+--- Starting training with (best) hyperparameters (Cross Validation) ---
+
+test hits@10: 0.020451693851944792
+
+-------------Run Classification HPO---------------------------------------------
+
+--- Running Classification HPO with model logistic_regression---
+Best Parameters: {'C': 21305.19031009662}
+Best Parameters: {'C': 78.24226073753087}
+Best Parameters: {'C': 0.15786464350582669}
+Best Parameters: {'C': 291.4428360108827}
+Best Parameters: {'C': 10162.074894723866}
+
+--- Running Classification HPO with model elastic_net---
+Best Parameters: {'C': 77.64607612465534, 'l1_ratio': 0.69163470304715}
+Best Parameters: {'C': 8.101064031193233e-06, 'l1_ratio': 0.9368036808845505}
+Best Parameters: {'C': 38530.38095122411, 'l1_ratio': 0.1069539622256035}
+Best Parameters: {'C': 0.06975668859235784, 'l1_ratio': 0.3370165061314593}
+Best Parameters: {'C': 1.7854889888612398e-06, 'l1_ratio': 0.19468493261326025}
+---------------------------------------------------------------------
+06/23/26 10:36:29
+=====================================================================

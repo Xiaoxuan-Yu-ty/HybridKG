@@ -588,7 +588,7 @@ def generat_and_save_hybrid(exp_path:str,
     # 3. Convert network to triples: edgelist df
     graph_df = nx.to_pandas_edgelist(network)
     graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
-    graph_df=graph_df[['source','target','relation','label']]
+    graph_df=graph_df[['source','relation','target','label']]
     graph_df.to_csv(save_edgelist)
     
     # 4. save

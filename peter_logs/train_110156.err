@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 12, in <module>
+    from data_processing.pyg_graph_generator import generat_and_save_hybrid
+  File "/home/xyu/thesis/HybridKG/data_processing/pyg_graph_generator.py", line 12, in <module>
+    from sklearn.neighbors import NearestNeighbors
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/__init__.py", line 70, in <module>
+    from sklearn.base import clone  # noqa: E402
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/base.py", line 20, in <module>
+    from sklearn.utils._metadata_requests import _MetadataRequester, _routing_enabled
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/__init__.py", line 9, in <module>
+    from sklearn.utils._chunking import gen_batches, gen_even_slices
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/_chunking.py", line 11, in <module>
+    from sklearn.utils._param_validation import Interval, validate_params
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/_param_validation.py", line 17, in <module>
+    from sklearn.utils.validation import _is_arraylike_not_scalar
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/validation.py", line 24, in <module>
+    from sklearn.utils._array_api import (
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/_array_api.py", line 23, in <module>
+    from sklearn.utils.fixes import parse_version
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/sklearn/utils/fixes.py", line 16, in <module>
+    import scipy.stats
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/scipy/stats/__init__.py", line 628, in <module>
+    from ._stats_py import *
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/scipy/stats/_stats_py.py", line 40, in <module>
+    from scipy.spatial import distance_matrix
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/scipy/spatial/__init__.py", line 124, in <module>
+    from . import distance, transform
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/scipy/spatial/transform/__init__.py", line 20, in <module>
+    from ._rotation import Rotation, Slerp
+  File "scipy/spatial/transform/_rotation.pyx", line 1, in init scipy.spatial.transform._rotation
+ImportError: scipy._cyutility does not export expected C function slice_memviewslice

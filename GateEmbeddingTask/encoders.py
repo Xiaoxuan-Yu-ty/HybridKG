@@ -12,13 +12,9 @@ from torch_scatter import scatter
 
 import os
 import sys
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
-from HRGNN.HRGCNConv import HRGCNLayer
-from HRGNN.HRGATConv import HRGATLayer
+
+from GateEmbeddingTask.HRGNN.HRGCNConv import HRGCNLayer
+from GateEmbeddingTask.HRGNN.HRGATConv import HRGATLayer
 
 
 class BaseHeteroEncoder(torch.nn.Module):
@@ -289,7 +285,7 @@ class RGCNEcoder(BaseHeteroEncoder):
         edge_type_list = []
         
         for etype, edge_index in edge_index_dict.items():
-            if edge_index.num_edges > 0:
+            if edge_index.size(1) > 0:
                 src_nt, _, dst_nt = etype
                 # Map local node IDs to global space using offsets
                 src_offset = node_offsets[src_nt]

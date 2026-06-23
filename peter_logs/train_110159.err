@@ -1,0 +1,47 @@
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 14, in <module>
+    from CLEP_repeat.embedding.kge import do_kge, do_retrain
+  File "/home/xyu/thesis/HybridKG/CLEP_repeat/embedding/__init__.py", line 6, in <module>
+    from .kge import do_kge
+  File "/home/xyu/thesis/HybridKG/CLEP_repeat/embedding/kge.py", line 11, in <module>
+    from pykeen.hpo.hpo import hpo_pipeline_from_config
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/hpo/__init__.py", line 620, in <module>
+    from .hpo import HpoPipelineResult, hpo_pipeline, hpo_pipeline_from_config, hpo_pipeline_from_path  # noqa: F401
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/hpo/hpo.py", line 24, in <module>
+    from ..evaluation import Evaluator, evaluator_resolver
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/evaluation/__init__.py", line 5, in <module>
+    from .classification_evaluator import ClassificationEvaluator, ClassificationMetricResults
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/evaluation/classification_evaluator.py", line 13, in <module>
+    from .evaluator import Evaluator, MetricResults
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/evaluation/evaluator.py", line 27, in <module>
+    from ..models import Model
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/models/__init__.py", line 52, in <module>
+    from .inductive import InductiveERModel, InductiveNodePiece, InductiveNodePieceGNN
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/models/inductive/__init__.py", line 3, in <module>
+    from .base import InductiveERModel
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/models/inductive/base.py", line 9, in <module>
+    from ..nbase import ERModel
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/models/nbase.py", line 18, in <module>
+    from ..nn import representation_resolver
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/nn/__init__.py", line 80, in <module>
+    from .vision import VisualRepresentation, WikidataVisualRepresentation
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/nn/vision/__init__.py", line 3, in <module>
+    from .representation import VisionDataset, VisualRepresentation, WikidataVisualRepresentation
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/pykeen/nn/vision/representation.py", line 27, in <module>
+    from torchvision import models
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/torchvision/__init__.py", line 10, in <module>
+    from torchvision import _meta_registrations, datasets, io, models, ops, transforms, utils  # usort:skip
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/torchvision/_meta_registrations.py", line 163, in <module>
+    @torch.library.register_fake("torchvision::nms")
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/torch/library.py", line 828, in register
+    use_lib._register_fake(op_name, func, _stacklevel=stacklevel + 1)
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/torch/library.py", line 198, in _register_fake
+    handle = entry.fake_impl.register(func_to_register, source)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.11/site-packages/torch/_library/fake_impl.py", line 31, in register
+    if torch._C._dispatch_has_kernel_for_dispatch_key(self.qualname, "Meta"):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: operator torchvision::nms does not exist

@@ -1,0 +1,13 @@
+/home/xyu/thesis/HybridKG/GateEmbeddingTask/train_utils.py:56: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+  patient_x = torch.tensor([G.nodes[pid]['x'] for pid in p_ids], dtype=torch.float)
+Final training with all edges:   0%|          | 0/10 [00:00<?, ?it/s]Final training with all edges:  10%|█         | 1/10 [00:04<00:44,  4.95s/it]Final training with all edges:  20%|██        | 2/10 [00:09<00:36,  4.52s/it]Final training with all edges:  30%|███       | 3/10 [00:13<00:31,  4.54s/it]Final training with all edges:  40%|████      | 4/10 [00:17<00:26,  4.43s/it]Final training with all edges:  50%|█████     | 5/10 [00:22<00:21,  4.35s/it]Final training with all edges:  60%|██████    | 6/10 [00:26<00:17,  4.31s/it]Final training with all edges:  70%|███████   | 7/10 [00:30<00:13,  4.40s/it]Final training with all edges:  80%|████████  | 8/10 [00:35<00:08,  4.34s/it]Final training with all edges:  90%|█████████ | 9/10 [00:39<00:04,  4.31s/it]Final training with all edges: 100%|██████████| 10/10 [00:43<00:00,  4.28s/it]Final training with all edges: 100%|██████████| 10/10 [00:43<00:00,  4.37s/it]
+Traceback (most recent call last):
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/xyu/thesis/HybridKG/gnn_clep/train.py", line 554, in <module>
+    main()     
+  File "/home/xyu/thesis/HybridKG/gnn_clep/train.py", line 535, in main
+    for model_name in args.cls_model:
+AttributeError: 'Namespace' object has no attribute 'cls_model'

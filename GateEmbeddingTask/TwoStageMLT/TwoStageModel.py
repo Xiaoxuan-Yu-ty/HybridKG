@@ -170,7 +170,7 @@ def get_model(
                                                                         hidden_channels=hidden_channels, 
                                                                         out_channels=out_channels, 
                                                                         att_channels=att_channels,
-                                                                        num_layers=num_layers, 
+                                                                        num_layers=1, # aggregator only need to aggregate protein->patient information
                                                                         dropout=dropout,
                                                                         aggr=aggr,
                                                                         negative_slop=negative_slope,

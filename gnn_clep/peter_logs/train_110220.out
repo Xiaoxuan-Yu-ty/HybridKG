@@ -1,0 +1,21 @@
+=====================================================================
+Running GNN CLEP
+06/22/26 18:08:16
+Python path: /opt/software/easybuild/genoa/software/Miniforge3/24.11.3-0/bin/python
+---------------------------------------------------------------------
+Executing on hardware device: cuda
+
+[INFO] Loading existing graph from ./gnn_clep/results/adni/AD_KG/ecdf_5/G_adni_DiseaseKG_ecdf.pkl
+
+----------------------------Do Model Training------------------------------
+Starting conversion from NetworkX to HeteroData...
+HeteroData created: 16 node types, 610 edge types.
+
+--- Starting training with (best) hyperparameters (Cross Validation) ---
+
+-------------Run Classification HPO---------------------------------------------
+
+--- Running Classification HPO with model logistic_regression---
+---------------------------------------------------------------------
+06/22/26 18:09:31
+=====================================================================

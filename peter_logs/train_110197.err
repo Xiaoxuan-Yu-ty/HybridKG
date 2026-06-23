@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 49, in <module>
+    from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+  File "/home/xyu/thesis/HybridKG/GateEmbeddingTask/TwoStageMLT/TwoStageModel.py", line 7, in <module>
+    from torch_scatter import scatter
+ModuleNotFoundError: No module named 'torch_scatter'

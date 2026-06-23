@@ -1,0 +1,10 @@
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so
+  import torch_geometric.typing
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_sparse/_version_cuda.so
+  import torch_geometric.typing
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 13, in <module>
+    from data_processing.sample_scoring import *
+  File "/home/xyu/thesis/HybridKG/data_processing/sample_scoring.py", line 10, in <module>
+    from statsmodels.stats.multitest import multipletests
+ModuleNotFoundError: No module named 'statsmodels'

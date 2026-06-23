@@ -20,13 +20,10 @@ from tqdm import tqdm
 import optuna
 from sklearn.model_selection import StratifiedKFold
 
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
 
-from train_utils import (
+from data_processing.pyg_graph_generator import generat_and_save_hybrid
+from data_processing.sample_scoring import *
+from GateEmbeddingTask.train_utils import (
     compute_link_loss, 
     evaluate_link,
     build_data_dict,
@@ -34,7 +31,8 @@ from train_utils import (
     convert_to_hetero_data,
     get_device
 )
-from TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -186,7 +184,7 @@ def train_epoch(model:TwoStageModel,
                 optimizer, 
                 negative_sampling_ratio:float, 
                 device, 
-                lambda_link=0.1):
+                lambda_cls=0.1):
     model.train()
     optimizer.zero_grad()
 
@@ -212,15 +210,15 @@ def train_epoch(model:TwoStageModel,
     cls_loss = F.cross_entropy(y_pred, y_true)
     
     
-    loss = cls_loss + lambda_link*link_loss
+    loss = lambda_cls*cls_loss + link_loss
 
     loss.backward()
     optimizer.step()
 
     loss_result = {'Total_loss': float(loss),
-                                   'LP_loss': float(link_loss),
-                                   'Cls_loss': float(cls_loss),
-                                   }
+                    'LP_loss': float(link_loss),
+                    'Cls_loss': float(cls_loss),
+                    }
 
     return loss_result
 
@@ -253,11 +251,8 @@ def evaluate_cls(model, data, mask_name):
         'AUPRC': float(average_precision_score(y_true, prob))
     }
     
-    # Extract only the attention weights for the evaluated nodes
-    masked_attention = None
-    if attention_weights is not None:
-        # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
-        masked_attention = attention_weights 
+    # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
+    masked_attention = attention_weights 
         
     return metrics, masked_attention
 
@@ -292,9 +287,9 @@ def train(model,
     eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1) if is_hpo else data.static_edge_index_dict
 
     for epoch in tqdm(range(epochs), desc="Training Model"):
-        current_lambda_link = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
+        current_lambda_cls = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
         
-        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_link)
+        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_cls)
         
         train_metrics, _ = evaluate_cls(model, data, 'train_mask')
         val_metrics, _ = evaluate_cls(model, data, 'val_mask')
@@ -553,8 +548,8 @@ def parse():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--negative_sampling_ratio", type=float, default=0.1)
-    parser.add_argument("--num_negative", type=int, default=100)
-    parser.add_argument("--pos_cap", type=int, default=100)
+    parser.add_argument("--num_negatives", type=int, default=100)
+    parser.add_argument("--pos_sample_cap", type=int, default=100)
 
     # Dynamic Scheduling Settings
     parser.add_argument("--schedule_type", type=str, default="linear", choices=["constant", "linear", "cosine"],
@@ -612,7 +607,10 @@ def main():
 
     # 3. Retrain with best hyperparameters (Cross Validation)
     print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
-    final_results, attention_archive = hpo_cross_validate(data, study.best_params, args, device)
+    final_results, attention_archive = hpo_cross_validate(data, 
+                                                          study.best_params, 
+                                                          args, 
+                                                          device)
 
     # Calculate Average Final Metrics
     avg_metrics = {}

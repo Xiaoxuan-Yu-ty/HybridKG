@@ -18,7 +18,7 @@ source /opt/software/easybuild/software/Miniforge3/24.1.2-0/etc/profile.d/conda.
 conda activate firegnn
 
 # Navigate to project directory
-cd "/home/xyu/thesis/HybridKG/GateEmbeddingTask/TwoStageMLT/"
+cd "/home/xyu/thesis/HybridKG/"
  
 # Load CUDA environment
 module load CUDA
@@ -37,7 +37,7 @@ which python
 for model in "${MODEL[@]}"; do
     echo "Running model: $model"
     # standard 'python' will now point to your activated firegnn environment automatically
-    /home/xyu/.conda/envs/firegnn/bin/python train.py --encoder_type "$model" --aggregator_type "$model" --num_trial 50 --epochs 500
+    /home/xyu/.conda/envs/firegnn/bin/python -m GateEmbeddingTask.TwoStageMLT.train_pipeline --encoder_type "$model" --aggregator_type "$model" --epochs 500
 done
 
 echo "-------------------------------------------------------------------"

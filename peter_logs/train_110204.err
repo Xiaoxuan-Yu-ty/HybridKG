@@ -1,0 +1,23 @@
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so
+  import torch_geometric.typing
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_sparse/_version_cuda.so
+  import torch_geometric.typing
+Traceback (most recent call last):
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch/_ops.py", line 1509, in load_library
+    ctypes.CDLL(path)
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/ctypes/__init__.py", line 374, in __init__
+    self._handle = _dlopen(self._name, mode)
+OSError: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 47, in <module>
+    from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
+  File "/home/xyu/thesis/HybridKG/GateEmbeddingTask/TwoStageMLT/TwoStageModel.py", line 7, in <module>
+    from torch_scatter import scatter
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/__init__.py", line 16, in <module>
+    torch.ops.load_library(spec.origin)
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch/_ops.py", line 1511, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so

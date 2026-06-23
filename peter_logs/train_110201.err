@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 12, in <module>
+    from data_processing.pyg_graph_generator import generat_and_save_hybrid
+  File "/home/xyu/thesis/HybridKG/data_processing/pyg_graph_generator.py", line 15, in <module>
+    import networkx as nx
+ModuleNotFoundError: No module named 'networkx'

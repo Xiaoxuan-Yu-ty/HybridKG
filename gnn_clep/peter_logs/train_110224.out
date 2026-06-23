@@ -1,0 +1,34 @@
+=====================================================================
+Running GNN CLEP
+06/22/26 18:45:51
+Python path: /opt/software/easybuild/genoa/software/Miniforge3/24.11.3-0/bin/python
+---------------------------------------------------------------------
+Executing on hardware device: cuda
+
+Running Sample Scoring ecdf with threshold 5...
+Starting ecdf analysis...
+Transposed data shape: (744, 50788), supposed to be [sample, gene]
+output_df columns: Index(['HIST1H3G', 'HIST1H3G.1', 'HIST1H3G.2', 'TNFAIP8L1', 'OTOP2',
+       'C17ORF78', 'CTAGE6', 'CTAGE15', 'F8A2', 'F8A3',
+       ...
+       'STAT1.5', 'STAT1.6', 'RNA18S5', 'RNA45S5', 'RNA18S5.1', 'RNA45S5.1',
+       'RNA18S5.2', 'RNA45S5.2', 'RNA28S5', 'RNA45S5.3'],
+      dtype='object', length=50788)
+Done! Files saved to ./gnn_clep/results/adni/AD_KG/ecdf_5
+
+--- Initializing Network Generation: dataset:adni |DiseaseKG | ecdf---
+Loaded graph from ./datasets/base_kgs/ad_kg_with_reverse_edges.pkl: 3732 nodes, 10554 edges
+Loaded graph from ./datasets/base_kgs/healthy_kg_with_reverse_edges.pkl: 4161 nodes, 13911 edges
+Saved graph to ./gnn_clep/results/adni/AD_KG/ecdf_5/G_adni_DiseaseKG_ecdf.pkl: 4476 nodes, 146598 edges
+
+Process Complete.
+Final Graph Stats: 4476 nodes and 146598 edges.
+
+----------------------------Do Model Training------------------------------
+Starting conversion from NetworkX to HeteroData...
+HeteroData created: 16 node types, 610 edge types.
+
+--- Starting training with (best) hyperparameters (Cross Validation) ---
+---------------------------------------------------------------------
+06/22/26 18:51:35
+=====================================================================

@@ -1,0 +1,51 @@
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-scatter'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so
+  import torch_geometric.typing
+/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_geometric/__init__.py:4: UserWarning: An issue occurred while importing 'torch-sparse'. Disabling its usage. Stacktrace: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_sparse/_version_cuda.so
+  import torch_geometric.typing
+Traceback (most recent call last):
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch/_ops.py", line 1509, in load_library
+    ctypes.CDLL(path)
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/ctypes/__init__.py", line 374, in __init__
+    self._handle = _dlopen(self._name, mode)
+OSError: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so: undefined symbol: _ZN5torch3jit17parseSchemaOrNameERKSsb
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/xyu/thesis/HybridKG/test_import.py", line 14, in <module>
+    from CLEP_repeat.embedding.kge import do_kge, do_retrain
+  File "/home/xyu/thesis/HybridKG/CLEP_repeat/embedding/__init__.py", line 6, in <module>
+    from .kge import do_kge
+  File "/home/xyu/thesis/HybridKG/CLEP_repeat/embedding/kge.py", line 11, in <module>
+    from pykeen.hpo.hpo import hpo_pipeline_from_config
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/hpo/__init__.py", line 620, in <module>
+    from .hpo import HpoPipelineResult, hpo_pipeline, hpo_pipeline_from_config, hpo_pipeline_from_path  # noqa: F401
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/hpo/hpo.py", line 24, in <module>
+    from ..evaluation import Evaluator, evaluator_resolver
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/evaluation/__init__.py", line 5, in <module>
+    from .classification_evaluator import ClassificationEvaluator, ClassificationMetricResults
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/evaluation/classification_evaluator.py", line 13, in <module>
+    from .evaluator import Evaluator, MetricResults
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/evaluation/evaluator.py", line 27, in <module>
+    from ..models import Model
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/models/__init__.py", line 52, in <module>
+    from .inductive import InductiveERModel, InductiveNodePiece, InductiveNodePieceGNN
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/models/inductive/__init__.py", line 3, in <module>
+    from .base import InductiveERModel
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/models/inductive/base.py", line 9, in <module>
+    from ..nbase import ERModel
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/models/nbase.py", line 18, in <module>
+    from ..nn import representation_resolver
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/nn/__init__.py", line 14, in <module>
+    from .message_passing import RGCNRepresentation
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/nn/message_passing.py", line 25, in <module>
+    from .representation import LowRankRepresentation, Representation
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/nn/representation.py", line 41, in <module>
+    from .weighting import EdgeWeighting, SymmetricEdgeWeighting, edge_weight_resolver
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/pykeen/nn/weighting.py", line 14, in <module>
+    import torch_scatter
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/__init__.py", line 16, in <module>
+    torch.ops.load_library(spec.origin)
+  File "/home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch/_ops.py", line 1511, in load_library
+    raise OSError(f"Could not load this library: {path}") from e
+OSError: Could not load this library: /home/xyu/.conda/envs/firegnn/lib/python3.10/site-packages/torch_scatter/_version_cuda.so
