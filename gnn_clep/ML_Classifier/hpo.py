@@ -54,7 +54,7 @@ def hpo_cross_validate(
     """
     k_fold = model_selection.StratifiedKFold(n_splits=cv, shuffle=True)
 
-    outer_cv_results = {}
+    outer_cv_results = defaultdict(list)
 
     for run_num, (train_indexes, test_indexes) in enumerate(tqdm(k_fold.split(X, y), total=cv, desc='Outer CV')):
         x_train = np.asarray(
@@ -121,10 +121,14 @@ def hpo_cross_validate(
                                               best_params=best_trial.params, 
                                               classifier=classifier)
         
-        cv_results['best_params'] = best_trial.params
-        print(f"Best Parameters: {best_trial.params}")
-        
-        outer_cv_results[run_num] = cv_results
+        # Accumulate each metric across folds
+        for key, value in cv_results.items():
+            if isinstance(value, dict):
+                outer_cv_results[key].append(value)    # append folds full/best parameters
+            elif isinstance(value, list):
+                outer_cv_results[key].extend(value)    # flatten single-element lists
+            else:
+                outer_cv_results[key].append(value)
 
     return outer_cv_results
 
