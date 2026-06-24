@@ -254,11 +254,11 @@ def main():
     print(f"\nFinal Averaged Test Metrics across 5 Folds: {avg_metrics}")
 
     # 4. Save training history, metrics, and attention weights
-    with open(os.path.join(scoring_output, "cv_metrics.json"), "w") as f:
+    with open(os.path.join(final_output_dir, "cv_metrics.json"), "w") as f:
         json.dump({"average_metrics": avg_metrics, "folds": final_results}, f, indent=4)
         
     if attention_archive:
-        attention_path = os.path.join(scoring_output, "attention_weights.pkl")
+        attention_path = os.path.join(final_output_dir, "attention_weights.pkl")
         with open(attention_path, "wb") as f:
             pickle.dump(attention_archive, f)
         print(f"Attention weights saved to {attention_path}")
