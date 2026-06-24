@@ -43,8 +43,9 @@ echo "---------------------------------------------------------------------"
 /home/xyu/.conda/envs/firegnn/bin/python -m gnn_clep.train \
     --DiseaseKG "$KG" \
     --kg_disease "$AD_PATH" \
+    --hpo \
     --epochs 200 \
-    --num_trials 100
+    --num_trial 100
 
 echo "---------------------------------------------------------------------"
 echo "$(date +"%D %T")"

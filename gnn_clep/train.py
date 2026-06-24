@@ -277,7 +277,7 @@ def parse():
                         help="Path to Healthy Knowledge Graph (.pkl).")
 
     # Argument for sample scoring and network generation
-    parser.add_argument("--exp_path", type=str, default="./data/ADNI/adni_exp_realcleaned.csv", 
+    parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
     parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
@@ -456,7 +456,8 @@ def main():
             storage=f"sqlite:///{final_output_dir}/optuna_lp.db",
             load_if_exists=True,
             direction="maximize", 
-            study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
+            study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}",
+            )
         
         # Wrap objective to pass data, args, device
         objective_func = lambda trial: objective(trial=trial,
@@ -476,7 +477,7 @@ def main():
                                                  eval_pos_cap=0,
                                                  )
         
-        study.optimize(objective_func, n_trials=args.num_trial, n_jobs=1)
+        study.optimize(objective_func, n_trials=args.num_trial, n_jobs=1, show_progress_bar=True)
         
         print("\nBest Trial Score:", study.best_value)
         print("Best Params:", study.best_params)
