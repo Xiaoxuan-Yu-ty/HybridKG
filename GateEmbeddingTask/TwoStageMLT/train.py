@@ -328,7 +328,7 @@ def run_inner_hpo(
         num_negatives = trial.suggest_categorical("num_negatives", [50, 100, 200, 500])
         pos_sample_cap = trial.suggest_categorical("pos_sample_cap", [50, 100, 200, 500])
 
-        inner_skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
+        inner_skf = StratifiedKFold(n_splits=1, shuffle=True, random_state=args.seed)
         y_trainval = y_all[trainval_idx]
         eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
         inner_composites = []

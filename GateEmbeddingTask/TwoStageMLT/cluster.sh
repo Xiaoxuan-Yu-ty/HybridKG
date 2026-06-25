@@ -37,7 +37,7 @@ which python
 for model in "${MODEL[@]}"; do
     echo "Running model: $model"
     # standard 'python' will now point to your activated firegnn environment automatically
-    /home/xyu/.conda/envs/firegnn/bin/python -m GateEmbeddingTask.TwoStageMLT.train_pipeline --num_trial 50  --epochs 200
+    /home/xyu/.conda/envs/firegnn/bin/python -m GateEmbeddingTask.TwoStageMLT.train_pipeline --num_trial 50  --epochs 200 --hpo
 done
 
 echo "-------------------------------------------------------------------"
