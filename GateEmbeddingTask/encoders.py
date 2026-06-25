@@ -15,6 +15,8 @@ import sys
 
 from GateEmbeddingTask.HRGCNConv import HRGCNLayer
 from GateEmbeddingTask.HRGATConv import HRGATLayer
+# from HRGCNConv import HRGCNLayer
+# from HRGATConv import HRGATLayer
 
 
 class BaseHeteroEncoder(torch.nn.Module):
@@ -45,14 +47,22 @@ class BaseHeteroEncoder(torch.nn.Module):
     def get_initial_x_dict(self, x_dict):
         """Standardizes input before GNN layers."""
         new_x_dict = {}
-        for node_type in self.embeddings.keys(): # Handles nodes without x
-            new_x_dict[node_type] = self.embeddings[node_type].weight
-        for node_type in self.input_lins.keys(): # Handles nodes with x
-            new_x_dict[node_type] = self.input_lins[node_type](x_dict[node_type])
-        
-        # Apply activation and dropout
-        return {nt: F.dropout(F.elu(x), p=self.dropout_rate, training=self.training) 
-                for nt, x in new_x_dict.items()}
+        all_types = (set(self.input_lins.keys()) | set(self.embeddings.keys()))
+        for node_type in all_types:
+            if (node_type in x_dict and x_dict[node_type] is not None):
+
+                h = self.input_lins[node_type](x_dict[node_type])
+            else:
+                h = self.embeddings[node_type].weight
+
+            h = F.elu(h)
+            h = F.dropout(
+                h,
+                p=self.dropout_rate,
+                training=self.training,
+            )
+            new_x_dict[node_type] = h
+        return new_x_dict
 
 
 class HRGATEncoder(BaseHeteroEncoder):
@@ -84,12 +94,13 @@ class HRGATEncoder(BaseHeteroEncoder):
             out_dict, att_dict = layer(x_dict, edge_index_dict)
             
             # Apply Residuals
-            x_dict = {
+            layer_x_dict = {
                 nt: (F.dropout(F.elu(h), p=self.dropout_rate, training=self.training) + x_dict.get(nt, 0))
                 if h.size(-1) == x_dict.get(nt, torch.tensor(0)).size(-1) else h
                 for nt, h in out_dict.items()
             }
             attention_weights.append(att_dict)
+            x_dict = layer_x_dict
 
         return x_dict, attention_weights
 

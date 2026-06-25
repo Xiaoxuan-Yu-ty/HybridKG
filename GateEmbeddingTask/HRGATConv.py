@@ -53,7 +53,7 @@ class HRGATLayer(nn.Module):
         #     self.self_lins[node_type] = nn.Linear(in_dim, out_dim, bias=False,)
 
         # Semantic relation attention
-        self.query_lin = nn.Linear(out_dim, att_dim, bias=False,)
+        self.query_lin = nn.Linear(in_dim, att_dim, bias=False,)
         self.key_lin = nn.Linear(out_dim, att_dim, bias=False,)
         self.semantic_att = nn.Linear(2 * att_dim, 1, bias=False,)
 
@@ -277,12 +277,12 @@ class HRGAT(nn.Module):
             )
 
         # Output projection
-        self.output_lins = nn.ModuleDict()
-        for node_type in data.node_types:
-            self.output_lins[node_type] = nn.Linear(
-                hidden_channels,
-                out_channels,
-            )
+        self.res_projections = nn.ModuleDict()
+
+    def get_res_proj(self, node_type, prev_h, target_dim):
+        if node_type not in self.res_projections:
+            self.res_projections[node_type] = nn.Linear(prev_h.shape[-1], target_dim).to(prev_h.device)
+        return self.res_projections[node_type](prev_h)
 
     def forward(self, x_dict, edge_index_dict):
 
@@ -308,41 +308,47 @@ class HRGAT(nn.Module):
 
         # HRGAT layers
         semantic_attentions = []
+        
         for layer in self.layers:
-
-            out_dict, att_dict = layer(
-                x_dict,
-                edge_index_dict,
-            )
-
+            out_dict, att_dict = layer(x_dict, edge_index_dict)
+            semantic_attentions.append(att_dict)
+            
             new_x_dict = {}
             for node_type in x_dict.keys():
-
                 if node_type in out_dict:
-
                     h = out_dict[node_type]
-                    h = F.dropout(
-                        h,
-                        p=self.dropout,
-                        training=self.training,
-                    )
-                    # residual
-                    if h.size(-1) == x_dict[node_type].size(-1):
-                        h = h + x_dict[node_type]
-
+                    h = F.dropout(h, p=self.dropout, training=self.training)
+                    h = F.elu(h)
+                    
+                    # Safe Residual Handling:
+                    # If dimensions match, add directly.
+                    # If dimensions mismatch, project the input to match the output.
+                    # If the node didn't exist before, just take the output.
+                    prev_h = x_dict[node_type]
+                    
+                    if h.shape[-1] == prev_h.shape[-1]:
+                        h = h + prev_h
+                    else:
+                        # Projection: Linear mapping to match dimension for residual
+                        # You may need to define 'self.res_proj[node_type]' in __init__
+                        h = h + self.get_res_proj(node_type, prev_h, h.shape[-1])
+                    
                     new_x_dict[node_type] = h
-
                 else:
+                    # Keep original if not processed by this layer
                     new_x_dict[node_type] = x_dict[node_type]
-
+            
             x_dict = new_x_dict
 
-            semantic_attentions.append(att_dict)
+        return x_dict, semantic_attentions
+        
+        
+        
+        
+        # # Output projection
+        # out_dict = {
+        #     node_type: self.output_lins[node_type](x)
+        #     for node_type, x in x_dict.items()
+        # }
 
-        # Output projection
-        out_dict = {
-            node_type: self.output_lins[node_type](x)
-            for node_type, x in x_dict.items()
-        }
-
-        return out_dict, semantic_attentions
+        # return out_dict, semantic_attentions

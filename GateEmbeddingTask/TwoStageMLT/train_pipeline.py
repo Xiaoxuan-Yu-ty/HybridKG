@@ -73,6 +73,7 @@ def parse():
     
     # General Optimizer Settings
     parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--n_jobs", type=int, default=2, help="Number of jobs in Optuna HPO process.")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -191,6 +192,7 @@ def main():
         data=data,
         args=args,
         device=device,
+        do_hpo=True,
         db_url=f"sqlite:///{final_output_dir}/optuna.db",
         is_multi_metrics=True,
         )

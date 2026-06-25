@@ -131,8 +131,12 @@ def build_data_dict(data):
     # get feature dim from Patient
     patient_dim = data["Patient"]['x'].size(-1)
     for node_type in data.node_types:
-        x_dict[node_type] = data[node_type]['x']
-        assert data[node_type]['x'].size(-1) == patient_dim
+        try:
+            x_dict[node_type] = data[node_type]['x']
+            assert data[node_type]['x'].size(-1) == patient_dim
+        except KeyError:
+            x_dict[node_type]=None
+        
     
     data.x_dict = x_dict
     data.num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}

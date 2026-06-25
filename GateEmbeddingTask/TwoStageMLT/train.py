@@ -44,6 +44,7 @@ def hierarchical_attention_loss(
     attentions:list,
     y,
     mask,
+    device,
     up_reg_d = 'Protein__rev_up_reg_d__Patient',
     down_reg_d = 'Protein__rev_down_reg_d__Patient',
     up_reg_h = 'Protein__rev_up_reg_h__Patient',
@@ -63,37 +64,32 @@ def hierarchical_attention_loss(
     Returns:
         Average attention supervision loss across all layers.
     """
-    device = attentions[0]['Patient']['attention'].device
     y = y.to(device)[mask] # Move y to the correct device before masking
     
     total_att_loss = 0.0
     # supervise ALL layers
-    for layer_att in attentions:
-        # semantic attention tensor: shape:[N, num_relations]
-        beta=layer_att['Patient']['attention'][mask]
-        relation_names = layer_att['Patient']['relation_names']
-        
-        # disease/control attentions
-        disease_up_index, disease_down_index = relation_names.index(up_reg_d), relation_names.index(down_reg_d)  # e.g. 'Protein__rev_reg_disease__Patient'
-        
-        control_up_index, control_down_index = relation_names.index(up_reg_h), relation_names.index(down_reg_h) 
-        
-        disease_att = beta[:,disease_up_index] + beta[:,disease_down_index]
-        control_att = beta[:, control_up_index] + beta[:, control_down_index]
-        # relative preference logit
-        # positive: disease > control
-        # negative: control > disease
-        eps = 1e-8
-        # Log odds: unbounded, proper logit
-        att_logit = torch.log(disease_att + eps) - torch.log(control_att + eps)
-        att_loss = F.binary_cross_entropy_with_logits(att_logit, y.float())
+    #for layer_att in attentions:
+    layer_att = attentions[-1] if isinstance(attentions, list) else attentions
+    # semantic attention tensor: shape:[N, num_relations]
+    beta=layer_att['Patient']['attention'][mask]
+    relation_names = layer_att['Patient']['relation_names']
+    
+    # disease/control attentions
+    disease_up_index, disease_down_index = relation_names.index(up_reg_d), relation_names.index(down_reg_d)  # e.g. 'Protein__rev_reg_disease__Patient'
+    
+    control_up_index, control_down_index = relation_names.index(up_reg_h), relation_names.index(down_reg_h) 
+    
+    disease_att = beta[:,disease_up_index] + beta[:,disease_down_index]
+    control_att = beta[:, control_up_index] + beta[:, control_down_index]
+    # relative preference logit
+    # positive: disease > control
+    # negative: control > disease
+    eps = 1e-8
+    # Log odds: unbounded, proper logit
+    att_logit = torch.log(disease_att + eps) - torch.log(control_att + eps)
+    att_loss = F.binary_cross_entropy_with_logits(att_logit, y.float())
 
-        total_att_loss += att_loss
-
-    # average across layers
-    total_att_loss = total_att_loss / len(attentions)
-
-    return total_att_loss
+    return att_loss
 
 def serialize_attention_weight(attention_weights:List[Dict]):
     
@@ -139,8 +135,8 @@ def train_epoch(model:TwoStageModel,
     optimizer.zero_grad()
 
     h_dict = model(x_dict=data.x_dict, 
-                        static_edge_index_dict = data.static_edge_index_dict,
-                        )
+                    static_edge_index_dict = data.static_edge_index_dict,
+                    )
     h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, 
                                            dynamic_edge_index_dict= data.dynamic_edge_index_dict)
     
@@ -167,6 +163,7 @@ def train_epoch(model:TwoStageModel,
     if attention_loss:
         att_loss = hierarchical_attention_loss(
                                                     attentions=attention_weights,
+                                                    device=device,
                                                     y=data['Patient'].y,
                                                     mask=mask,
                                                 )
@@ -365,6 +362,7 @@ def run_inner_hpo(
                 num_classes=num_classes,
                 device=device,
             )
+            # print('HPO model defined:\n', model)
             optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
             trained_model = None
 
@@ -532,7 +530,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
         print(f"\n=== Outer Fold {outer_fold+1}/5 ===")
 
         # --- Inner HPO (test_idx never used here) ---
-        if do_hpo and best_params is not None and db_url is not None:
+        if do_hpo and best_params is None and db_url is not None:
             print("Starting inner HPO...")
             best_params = run_inner_hpo(
                 db_url=db_url,
