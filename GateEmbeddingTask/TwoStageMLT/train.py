@@ -18,7 +18,7 @@ import math
 from tqdm import tqdm
 
 import optuna
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 
 from data_processing.pyg_graph_generator import generat_and_save_hybrid
@@ -40,64 +40,14 @@ from sklearn.metrics import (
     average_precision_score
 )
 
-def merge_patient_protein_edges(data):
-    """Rebuild HeteroData() with merged Patient-Proetin edges."""
-    new_data = HeteroData()
-    
-    # Copy node features
-    for node_type in data.node_types:
-        for key, value in data[node_type].items():
-            new_data[node_type][key] = value
-
-    # Collect edges
-    d_edges = []
-    rev_d_edges = []
-
-    h_edges = []
-    rev_h_edges = []
-
-    # Keep unrelated edge types
-    for et in data.edge_types:
-        src, rel, dst = et
-        edge_index = data[et].edge_index
-
-        # Patient <-> Protein relations
-        if (src == 'Patient' and dst == 'Protein') or (src == 'Protein' and dst == 'Patient'):
-
-            # reverse edges
-            if 'rev' in rel:
-                if 'disease' in rel:
-                    rev_d_edges.append(edge_index)
-                else:
-                    rev_h_edges.append(edge_index)
-            # forward edges
-            else:
-                if 'disease' in rel:
-                    d_edges.append(edge_index)
-                else:
-                    h_edges.append(edge_index)
-
-        # keep other edge types
-        else:
-            new_data[et].edge_index = edge_index
-
-    # Merge disease relations
-    new_data[('Patient', 'reg_disease', 'Protein')].edge_index = torch.cat(d_edges,dim=1,)
-    # Merge healthy relations
-    new_data[('Patient', 'reg_control', 'Protein')].edge_index = torch.cat(h_edges,dim=1,)
-    # Reverse disease
-    new_data[('Protein', 'rev_reg_disease', 'Patient')].edge_index = torch.cat(rev_d_edges,dim=1,)
-    # Reverse healthy
-    new_data[('Protein', 'rev_reg_control', 'Patient')].edge_index = torch.cat(rev_h_edges,dim=1,)
-
-    return new_data
-
 def hierarchical_attention_loss(
     attentions:list,
     y,
     mask,
-    disease_index=1,
-    control_index=2,
+    up_reg_d = 'Protein__rev_up_reg_d__Patient',
+    down_reg_d = 'Protein__rev_down_reg_d__Patient',
+    up_reg_h = 'Protein__rev_up_reg_h__Patient',
+    down_reg_h = 'Protein__rev_down_reg_h__Patient',
 ):
     """
     Soft supervision over semantic relation attention.
@@ -113,31 +63,30 @@ def hierarchical_attention_loss(
     Returns:
         Average attention supervision loss across all layers.
     """
-    device = attentions[0]['Patient']['attention'].device if 'attention' in attentions[0]['Patient'] else attentions[0]['Patient'].device
-    
+    device = attentions[0]['Patient']['attention'].device
     y = y.to(device)[mask] # Move y to the correct device before masking
     
     total_att_loss = 0.0
     # supervise ALL layers
     for layer_att in attentions:
         # semantic attention tensor: shape:[N, num_relations]
-        try:
-            beta = layer_att['Patient'][mask]
-        except:
-            beta=layer_att['Patient']['attention'][mask]
+        beta=layer_att['Patient']['attention'][mask]
+        relation_names = layer_att['Patient']['relation_names']
         
         # disease/control attentions
-        disease_att = beta[:, disease_index]
-        control_att = beta[:, control_index]
-
+        disease_up_index, disease_down_index = relation_names.index(up_reg_d), relation_names.index(down_reg_d)  # e.g. 'Protein__rev_reg_disease__Patient'
+        
+        control_up_index, control_down_index = relation_names.index(up_reg_h), relation_names.index(down_reg_h) 
+        
+        disease_att = beta[:,disease_up_index] + beta[:,disease_down_index]
+        control_att = beta[:, control_up_index] + beta[:, control_down_index]
         # relative preference logit
         # positive: disease > control
         # negative: control > disease
-        att_logit = disease_att - control_att
-
-        # BCE supervision
-        att_loss = F.binary_cross_entropy_with_logits(
-            att_logit, y.float(),)
+        eps = 1e-8
+        # Log odds: unbounded, proper logit
+        att_logit = torch.log(disease_att + eps) - torch.log(control_att + eps)
+        att_loss = F.binary_cross_entropy_with_logits(att_logit, y.float())
 
         total_att_loss += att_loss
 
@@ -184,18 +133,22 @@ def train_epoch(model:TwoStageModel,
                 optimizer, 
                 negative_sampling_ratio:float, 
                 device, 
-                lambda_cls=0.1):
+                lambda_cls=0.1,
+                attention_loss=True):
     model.train()
     optimizer.zero_grad()
 
     h_dict = model(x_dict=data.x_dict, 
                         static_edge_index_dict = data.static_edge_index_dict,
                         )
-    h_final, h_patient,_ = model.aggregate(h_dict=h_dict, dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+    h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, 
+                                           dynamic_edge_index_dict= data.dynamic_edge_index_dict)
     
     mask = data['Patient'].train_mask
 
     # link prediction loss
+    # Intentional: LP loss uses encoder embeddings (h_dict), not aggregator output
+    # Aggregator is only supervised by classification loss
     link_loss = compute_link_loss(model=model, 
                                   z_dict=h_dict, 
                                   edge_index_dict=data.static_edge_index_dict,
@@ -209,8 +162,15 @@ def train_epoch(model:TwoStageModel,
     # F.cross_entropy combines log_softmax and nll_loss to calculate raw logits
     cls_loss = F.cross_entropy(y_pred, y_true)
     
-    
-    loss = lambda_cls*cls_loss + link_loss
+    # attention loss
+    att_loss = torch.tensor(0.0, device=device)
+    if attention_loss:
+        att_loss = hierarchical_attention_loss(
+                                                    attentions=attention_weights,
+                                                    y=data['Patient'].y,
+                                                    mask=mask,
+                                                )
+    loss = lambda_cls*cls_loss + link_loss + att_loss
 
     loss.backward()
     optimizer.step()
@@ -218,6 +178,7 @@ def train_epoch(model:TwoStageModel,
     loss_result = {'Total_loss': float(loss),
                     'LP_loss': float(link_loss),
                     'Cls_loss': float(cls_loss),
+                    'Attention_loss': float(att_loss),
                     }
 
     return loss_result
@@ -276,6 +237,7 @@ def train(model,
           pos_sample_cap,
           lambda_end,
           args, 
+          val_mask_name='val_mask',
           is_hpo=True,
           is_multi_metrics=True):
     
@@ -289,10 +251,16 @@ def train(model,
     for epoch in tqdm(range(epochs), desc="Training Model"):
         current_lambda_cls = compute_scheduled_value(epoch, epochs, args.lambda_start, lambda_end, args.schedule_type)
         
-        losses = train_epoch(model, data, optimizer, negative_sampling_ratio, device, current_lambda_cls)
+        losses = train_epoch(model, 
+                             data, 
+                             optimizer, 
+                             negative_sampling_ratio, 
+                             device, 
+                             current_lambda_cls,
+                             attention_loss=args.attention_loss if hasattr(args, 'attention_loss') else True)
         
         train_metrics, _ = evaluate_cls(model, data, 'train_mask')
-        val_metrics, _ = evaluate_cls(model, data, 'val_mask')
+        val_metrics, _ = evaluate_cls(model, data, val_mask_name)
        
         # Evaluate Link on sampled edges (HPO) or all edges (Final)
         val_hits = evaluate_link(
@@ -331,187 +299,278 @@ def train(model,
     return model, train_history, best_composite
 
 
-def objective(trial, data, args, device, is_multi_metrics=True) -> float:
-    """Optuna objective function for HPO."""
-    # 1. Suggest Hyperparameters
-    # Optimizer parameters
-    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-4, log=True)
-    
-    # Model parameters
-    hidden_channels = trial.suggest_categorical("hidden_channels", [64, 128, 256])
-    out_channels = trial.suggest_categorical("out_channels", [32, 64, 128])
-    att_channels = trial.suggest_categorical("att_channels", [16,32,64])
-    num_layers = trial.suggest_categorical("num_layers",[2, 3, 4])
-    lambda_end = trial.suggest_float("lambda_end", 0.1, 1.0)
-    dropout = trial.suggest_float("dropout", 0.1, 0.5)
-    heads = trial.suggest_categorical("heads",[2,3,4])
-    negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
-    aggr = trial.suggest_categorical("aggr", ['sum','mean'])
-    
-    # Link prediction parameters
-    negative_sampling_ratio=trial.suggest_float("negative_sampling_ratio", 0.1, 1.0)
-    num_negatives=trial.suggest_categorical("num_negatives",[50,100,200,500])
-    pos_sample_cap=trial.suggest_categorical("pos_sample_cap",[50,100,200,500])
+def run_inner_hpo(
+    db_url,
+    data,
+    args,
+    device,
+    trainval_idx,
+    y_all,
+    num_patients,
+    num_classes,
+    is_multi_metrics,
+):
+    """
+    Inner HPO loop: 3-fold CV over trainval_idx only.
+    Returns best_params from Optuna study.
+    """
+    def inner_objective(trial):
+        # --- Suggest hyperparameters ---
+        lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-4, log=True)
+        hidden_channels = trial.suggest_categorical("hidden_channels", [64, 128, 256])
+        out_channels = trial.suggest_categorical("out_channels", [32, 64, 128])
+        att_channels = trial.suggest_categorical("att_channels", [16, 32, 64])
+        num_layers = trial.suggest_categorical("num_layers", [2, 3, 4])
+        lambda_end = trial.suggest_float("lambda_end", 0.1, 1.0)
+        dropout = trial.suggest_float("dropout", 0.1, 0.5)
+        heads = trial.suggest_categorical("heads", [2, 3, 4])
+        negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
+        aggr = trial.suggest_categorical("aggr", ['sum', 'mean'])
+        negative_sampling_ratio = trial.suggest_float("negative_sampling_ratio", 0.1, 1.0)
+        num_negatives = trial.suggest_categorical("num_negatives", [50, 100, 200, 500])
+        pos_sample_cap = trial.suggest_categorical("pos_sample_cap", [50, 100, 200, 500])
 
-    # 2. Setup K-Fold
-    num_patients = data['Patient'].x.size(0)
-    y_all = data['Patient'].y.cpu().numpy()
-    num_classes = int(y_all.max()) + 1
-    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
-    
-    fold_composites = []
-    
-    # We will log the individual metrics to the trial so you can see them in Optuna dashboard
-    fold_f1s, fold_aurocs, fold_hits = [], [], []
-    # Sub-sample edges if we are doing HPO to save massive amounts of time
-    eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
+        inner_skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
+        y_trainval = y_all[trainval_idx]
+        eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
+        inner_composites = []
+        fold_f1s, fold_aurocs, fold_hits = [], [], []
 
-    print(
-        f"RAM before model: "
-        f"{psutil.Process().memory_info().rss/1024**3:.2f} GB"
-    )
+        for inner_fold, (train_idx_rel, val_idx_rel) in enumerate(
+            inner_skf.split(np.zeros(len(trainval_idx)), y_trainval)
+        ):
+            # Map relative → absolute indices
+            train_idx_abs = trainval_idx[train_idx_rel]
+            val_idx_abs = trainval_idx[val_idx_rel]
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(np.zeros(num_patients), y_all)):
-        # Update masks for this fold
-        data['Patient'].train_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
-        data['Patient'].train_mask[train_idx] = True
-        data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
-        data['Patient'].val_mask[val_idx] = True
+            data['Patient'].train_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
+            data['Patient'].train_mask[train_idx_abs] = True
+            data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
+            data['Patient'].val_mask[val_idx_abs] = True
 
-        # Re-initialize model for each fold
-        model = get_model(data=data,
-                    kg_encoder_type=args.encoder_type,
-                    patient_encoder_type=args.aggregator_type,
-                    decoder_type=args.decoder_type,
-                    hidden_channels=hidden_channels, 
-                    out_channels=out_channels, 
-                    att_channels=att_channels,
-                    num_layers=num_layers, 
-                    dropout=dropout,
-                    heads=heads,
-                    aggr=aggr,
-                    negative_slope=negative_slope,
-                    num_classes=num_classes,
-                    device=device)
-        
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        
-        trained_model = None
-        try:
-            trained_model, _, best_composite = train(
-                model=model, data=data, optimizer=optimizer, epochs=int(args.epochs),
-                negative_sampling_ratio=negative_sampling_ratio, num_negatives=num_negatives,
-                pos_sample_cap=pos_sample_cap, lambda_end=lambda_end,args=args, device=device, is_hpo=True, is_multi_metrics=is_multi_metrics
+            model = get_model(
+                data=data,
+                kg_encoder_type=args.encoder_type,
+                patient_encoder_type=args.aggregator_type,
+                decoder_type=args.decoder_type,
+                hidden_channels=hidden_channels,
+                out_channels=out_channels,
+                att_channels=att_channels,
+                num_layers=num_layers,
+                dropout=dropout,
+                heads=heads,
+                aggr=aggr,
+                negative_slope=negative_slope,
+                num_classes=num_classes,
+                device=device,
             )
-            
-            val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
-            val_hits = evaluate_link(
-                                            model=model, 
-                                            x_dict=data.x_dict,
-                                            train_edge_index_dict=data.static_edge_index_dict,
-                                            eval_edge_index_dict=eval_edge_index_dict,
-                                            num_nodes_dict=data.num_nodes_dict,
-                                            device=device,
-                                            k=args.k if hasattr(args, 'k') else 10,
-                                            num_negatives=num_negatives,
-                                            pos_sample_cap=pos_sample_cap
-                                        )
-            fold_composites.append(best_composite)
-            fold_f1s.append(val_metrics['F1_score'])
-            fold_aurocs.append(val_metrics['AUROC'])
-            fold_hits.append(val_hits)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+            trained_model = None
 
-            # Optuna Pruning based on composite, and report
-            trial.report(best_composite, fold)
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
+            try:
+                trained_model, _, best_composite = train(
+                    model=model, data=data, optimizer=optimizer,
+                    epochs=int(args.epochs),
+                    negative_sampling_ratio=negative_sampling_ratio,
+                    num_negatives=num_negatives,
+                    pos_sample_cap=pos_sample_cap,
+                    lambda_end=lambda_end,
+                    args=args,
+                    device=device,
+                    is_hpo=True,
+                    is_multi_metrics=is_multi_metrics,
+                    val_mask_name='val_mask',
+                )
+                
+                val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
+                val_hits = evaluate_link(
+                    model=trained_model,
+                    x_dict=data.x_dict,
+                    train_edge_index_dict=data.static_edge_index_dict,
+                    eval_edge_index_dict=eval_edge_index_dict,
+                    num_nodes_dict=data.num_nodes_dict,
+                    device=device,
+                    k=args.k if hasattr(args, 'k') else 10,
+                    num_negatives=num_negatives,
+                    pos_sample_cap=pos_sample_cap,
+                )
+                inner_composites.append(best_composite)
+                fold_f1s.append(val_metrics['F1_score'])
+                fold_aurocs.append(val_metrics['AUROC'])
+                fold_hits.append(val_hits)
+
+                trial.report(best_composite, inner_fold)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+
+            finally:
+                del model, optimizer
+                if trained_model is not None:
+                    del trained_model
+                gc.collect()
+                torch.cuda.empty_cache()
         
-        finally:
-            # Clean up memory even if training fails or is pruned
-            if model is not None:
-                del model
-            if optimizer is not None:
-                del optimizer
-            if trained_model is not None:
-                del trained_model
-            gc.collect()
-            torch.cuda.empty_cache()
+        # Log specific metrics for analysis
+        trial.set_user_attr("mean_f1", float(np.mean(fold_f1s)))
+        trial.set_user_attr("mean_auroc", float(np.mean(fold_aurocs)))
+        trial.set_user_attr("hits@10", float(np.mean(fold_hits)))
 
-    # Log specific metrics for analysis
-    trial.set_user_attr("mean_f1", float(np.mean(fold_f1s)))
-    trial.set_user_attr("mean_auroc", float(np.mean(fold_aurocs)))
-    trial.set_user_attr("hits@10", float(np.mean(fold_hits)))
+        return float(np.mean(inner_composites))
 
-    print(
-        f"RAM after model: "
-        f"{psutil.Process().memory_info().rss/1024**3:.2f} GB"
+    study = optuna.create_study(storage=db_url,
+                                        load_if_exists=True,
+                                        direction="maximize", 
+                                        study_name="Inner-Loop Cross Validation for HPO",
+                                        )
+    
+    study.optimize(inner_objective, n_trials=args.num_trial, n_jobs=args.n_jobs, show_progress_bar=True)
+    print(f"  Best inner params: {study.best_params}")
+    return study.best_params
+
+
+def retrain_and_evaluate(
+    data,
+    args,
+    device,
+    trainval_idx,
+    test_idx,
+    y_all,
+    num_patients,
+    num_classes,
+    best_params,
+):
+    """
+    Retrains on full trainval split using best_params,
+    evaluates on locked test set.
+    Returns fold_metrics, history, attention_weights.
+    """
+    # Hold out small val split from trainval for monitoring only
+    # (no early stopping on it — just for logging)
+    trainval_train_rel, trainval_val_rel = train_test_split(
+        np.arange(len(trainval_idx)),
+        test_size=0.1,
+        stratify=y_all[trainval_idx],
+        random_state=args.seed,
+    )
+    trainval_train_abs = trainval_idx[trainval_train_rel]
+    trainval_val_abs = trainval_idx[trainval_val_rel]
+
+    data['Patient'].train_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
+    data['Patient'].train_mask[trainval_train_abs] = True
+    data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
+    data['Patient'].val_mask[trainval_val_abs] = True
+    data['Patient'].test_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
+    data['Patient'].test_mask[test_idx] = True
+
+    model = get_model(
+        data=data,
+        kg_encoder_type=args.encoder_type,
+        patient_encoder_type=args.aggregator_type,
+        decoder_type=args.decoder_type,
+        hidden_channels=best_params['hidden_channels'],
+        out_channels=best_params['out_channels'],
+        att_channels=best_params.get('att_channels', 32),
+        num_layers=best_params['num_layers'],
+        dropout=best_params['dropout'],
+        heads=best_params.get('heads', 2),
+        aggr=best_params.get('aggr', 'sum'),
+        negative_slope=best_params.get('negative_slope', 0.2),
+        num_classes=num_classes,
+        device=device,
+    )
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=best_params['lr'],
+        weight_decay=best_params['weight_decay'],
     )
 
-    return float(np.mean(fold_composites))
-
-def hpo_cross_validate(data, best_params, args, device):
-    print("\n--- Final Cross-Validation Evaluation ---")
-    final_results = {}
-    attention_archive = {} # Store attention weights across folds
-    
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
-    y_all = data['Patient'].y.cpu().numpy()
-    num_classes = max(y_all) + 1
-    
-    for fold, (train_idx, test_idx) in enumerate(skf.split(np.zeros(y_all.shape[0]), y_all)):
-        print(f"\n--- Running Final Evaluation Fold {fold+1}/5 ---")
-        
-        data['Patient'].train_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
-        data['Patient'].train_mask[train_idx] = True
-        data['Patient'].test_mask = torch.zeros(y_all.shape[0], dtype=torch.bool, device=device)
-        data['Patient'].test_mask[test_idx] = True
-
-        model = get_model(
-            data=data, 
-            kg_encoder_type=args.encoder_type, 
-            patient_encoder_type=args.aggregator_type,
-            decoder_type=args.decoder_type, 
-            hidden_channels=best_params['hidden_channels'], 
-            out_channels=best_params['out_channels'], 
-            att_channels=best_params.get('att_channels', 32),
-            num_layers=best_params['num_layers'], 
-            dropout=best_params['dropout'],
-            heads=best_params.get('heads', 2), 
-            aggr=best_params.get('aggr', 'sum'),
-            negative_slope=best_params.get('negative_slope', 0.2), 
-            num_classes=num_classes, 
-            device=device
-        )
-        
-        optimizer = torch.optim.AdamW(model.parameters(), 
-                                      lr=best_params['lr'], 
-                                      weight_decay=best_params['weight_decay'])
-        
-        # Train with is_hpo=False (uses 100% edges for hits@k logging)
+    trained_model = None
+    try:
         trained_model, history, _ = train(
-            model=model, data=data, optimizer=optimizer, epochs=int(args.epochs), 
-            args=args, negative_sampling_ratio=best_params['negative_sampling_ratio'],
-            num_negatives=best_params['num_negatives'], pos_sample_cap=best_params['pos_sample_cap'],lambda_end=best_params["lambda_end"],
-            device=device, is_hpo=False, is_multi_metrics=False
+            model=model, data=data, optimizer=optimizer,
+            epochs=int(args.epochs),
+            args=args,
+            negative_sampling_ratio=best_params['negative_sampling_ratio'],
+            num_negatives=best_params['num_negatives'],
+            pos_sample_cap=best_params['pos_sample_cap'],
+            lambda_end=best_params['lambda_end'],
+            device=device,
+            is_hpo=False,
+            is_multi_metrics=False,
+            val_mask_name='val_mask',  # monitoring only, not used for selection
         )
-        
-        # Test on Fold and grab attention weights
+
+        # Evaluate on locked test set
         fold_metrics, attention_weights = evaluate_cls(trained_model, data, 'test_mask')
-        final_results[f"fold_{fold}"] = {
+        return fold_metrics, history, attention_weights
+
+    finally:
+        del model, optimizer
+        if trained_model is not None:
+            del trained_model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
+def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_hpo=True, is_multi_metrics=True):
+    """
+    Outer loop: 5-fold CV for unbiased test evaluation.
+    Inner loop: 3-fold HPO CV, never sees outer test fold.
+    """
+    y_all = data['Patient'].y.cpu().numpy()
+    num_patients = len(y_all)
+    num_classes = int(y_all.max()) + 1
+
+    outer_skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    final_results = {}
+    attention_archive = {}
+
+    for outer_fold, (trainval_idx, test_idx) in enumerate(
+        outer_skf.split(np.zeros(num_patients), y_all)
+    ):
+        print(f"\n=== Outer Fold {outer_fold+1}/5 ===")
+
+        # --- Inner HPO (test_idx never used here) ---
+        if do_hpo and best_params is not None and db_url is not None:
+            print("Starting inner HPO...")
+            best_params = run_inner_hpo(
+                db_url=db_url,
+                data=data,
+                args=args,
+                device=device,
+                trainval_idx=trainval_idx,
+                y_all=y_all,
+                num_patients=num_patients,
+                num_classes=num_classes,
+                is_multi_metrics=is_multi_metrics,
+            )
+
+        # --- Retrain on trainval, evaluate on test ---
+        print("Retraining with best params...")
+        fold_metrics, history, attention_weights = retrain_and_evaluate(
+            data=data,
+            args=args,
+            device=device,
+            trainval_idx=trainval_idx,
+            test_idx=test_idx,
+            y_all=y_all,
+            num_patients=num_patients,
+            num_classes=num_classes,
+            best_params=best_params,
+        )
+
+        final_results[f"fold_{outer_fold}"] = {
             "metrics": fold_metrics,
-            "history": history
+            "history": history,
+            "best_params": best_params,
         }
-        
-        # Move attention weights to CPU and save
-        # TO DO: need a function to deal with different attention weights format
+
         if attention_weights is not None:
-            serializable_att = serialize_attention_weight(attention_weights=attention_weights)
-            attention_archive[f"fold_{fold}"] = serializable_att
-            
-        del trained_model, model, optimizer
-        gc.collect(); torch.cuda.empty_cache()
-    
+            attention_archive[f"fold_{outer_fold}"] = serialize_attention_weight(attention_weights)
+
+        print(f"  Fold {outer_fold+1} test metrics: {fold_metrics}")
+
     return final_results, attention_archive
 
 def parse():
@@ -544,6 +603,7 @@ def parse():
     
     # General Optimizer Settings
     parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs for Optuna HPO process")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -586,31 +646,14 @@ def main():
     data, node_mappings = convert_to_hetero_data(G)
     data = build_data_dict(data).to(device)
 
-    # 2. HPO (Optuna)
-    print("\n--- Starting Optuna HPO ---")
-    study = optuna.create_study(
-        storage=f"sqlite:///{final_output_dir}/optuna.db",
-        load_if_exists=True,
-        direction="maximize", 
-        study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
-    
-    # Wrap objective to pass data, args, device
-    objective_func = lambda trial: objective(trial, data, args, device, is_multi_metrics=False)
-    study.optimize(objective_func, n_trials=args.num_trial, n_jobs=1)
-    
-    print("\nBest Trial Composite Score:", study.best_value)
-    print("Best Params:", study.best_params)
-
-    # Save Study Best Params
-    with open(os.path.join(final_output_dir, "best_hpo_params.json"), "w") as f:
-        json.dump(study.best_params, f, indent=4)
-
-    # 3. Retrain with best hyperparameters (Cross Validation)
-    print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
-    final_results, attention_archive = hpo_cross_validate(data, 
-                                                          study.best_params, 
-                                                          args, 
-                                                          device)
+    # 2. Nested CV: HPO + Final Retrain
+    final_results, attention_archive = nested_cross_validate(
+        data=data,
+        args=args,
+        device=device,
+        db_url=f"sqlite:///{final_output_dir}/optuna.db",
+        is_multi_metrics=True
+        )
 
     # Calculate Average Final Metrics
     avg_metrics = {}

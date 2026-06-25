@@ -8,12 +8,7 @@ from torch_scatter import scatter
 
 import os
 import sys
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
-from encoders import get_encoder
+from GateEmbeddingTask.encoders import get_encoder, HRGATLayer
 
 
 class LinkDecoder(nn.Module):
@@ -82,6 +77,71 @@ class LinkDecoder(nn.Module):
             
         raise ValueError(f"Unknown model_type: {self.model_type}")
 
+class PatientAggregator(nn.Module):
+    def __init__(self, data, hidden_channels, att_channels, out_channels, 
+                 num_layers, dropout_rate, negative_slope,):
+        super().__init__()
+        self.dropout_rate = dropout_rate
+        self.num_layers = num_layers
+        
+        # Consistent input handling: 
+        # project original features if have to hidden space
+        # if not original feature, initialize embeddings
+        self.input_lins = nn.ModuleDict()
+        self.embeddings = nn.ModuleDict()
+
+        for node_type in data.node_types:
+            if hasattr(data[node_type], "x") and data[node_type].x is not None:
+                in_dim = data[node_type].x.size(-1)
+                self.input_lins[node_type] = nn.Linear(in_dim, hidden_channels)
+            else:
+                self.embeddings[node_type] = nn.Embedding(data[node_type].num_nodes, hidden_channels)
+
+        self.patient_aggregator = HRGATLayer(
+                metadata=(data.node_types, data.edge_types),
+                in_dim=hidden_channels,
+                out_dim=hidden_channels,
+                att_dim=att_channels,
+                dropout=dropout_rate,
+                negative_slope=negative_slope,
+            ) 
+        
+        self.gate = nn.Linear(2 * hidden_channels, 1)       # matches combined dim
+        self.fusion = nn.Linear(hidden_channels, out_channels)  # projects to out_channels
+
+    def get_initial_x_dict(self, x_dict):
+        """Standardizes input before GNN layers."""
+        new_x_dict = {}
+        for node_type in self.embeddings.keys(): # Handles nodes without x
+            if node_type not in self.input_lins:
+                new_x_dict[node_type] = self.embeddings[node_type].weight
+        for node_type in self.input_lins.keys(): # Handles nodes with x
+            new_x_dict[node_type] = self.input_lins[node_type](x_dict[node_type])
+        
+        # Apply activation and dropout
+        return {nt: F.dropout(F.elu(x), p=self.dropout_rate, training=self.training) 
+                for nt, x in new_x_dict.items()}
+    
+    def forward(self, x_dict, edge_index_dict):
+        x_dict = self.get_initial_x_dict(x_dict)
+        
+        # hidden space projected GeneExpression, learned Protein representation
+        h_gene, protein_embeddings = x_dict['Patient'], x_dict['Protein']
+        
+        new_x_dict = {'Patient':h_gene, 'Protein': protein_embeddings}
+        
+        # Protein->Patient message aggregation: no self-loop, no residual connection, purely protein aggregation
+        h_protein_dict, att_dict = self.patient_aggregator(new_x_dict, edge_index_dict)
+        h_protein_patient = h_protein_dict['Patient']
+
+        combined = torch.cat([h_gene, h_protein_patient], dim=-1)
+        gate = torch.sigmoid(self.gate(combined))
+
+        h_fused = gate * h_gene + (1 - gate) * h_protein_patient   # [N, hidden_channels]
+        h_final = self.fusion(h_fused) 
+
+        return h_final, att_dict  
+            
 class TwoStageModel(torch.nn.Module):
     def __init__(self, 
                  data:HeteroData, 
@@ -93,8 +153,8 @@ class TwoStageModel(torch.nn.Module):
                  ):
         super().__init__()
         self.encoder = encoder
-        self.aggregator = aggregator
         
+        self.aggregator = aggregator
         self.decoder = LinkDecoder(edge_types=data.edge_types, 
                                                 out_channels=out_channels,
                                                 model_type=decoder_type)
@@ -104,14 +164,12 @@ class TwoStageModel(torch.nn.Module):
     def forward(self, x_dict, static_edge_index_dict):
     
         h_dict, _= self.encoder(x_dict, static_edge_index_dict)
-
-        
         return h_dict
     
     def aggregate(self, h_dict, dynamic_edge_index_dict):
-        
-        h_final, attention_weights = self.aggregator(h_dict, dynamic_edge_index_dict)
-        h_patient = self.classifier(h_final['Patient'])
+        h_final, attention_weights = self.aggregator(h_dict, 
+                                                    dynamic_edge_index_dict)
+        h_patient = self.classifier(h_final)
         
         return h_final, h_patient, attention_weights
     
@@ -145,14 +203,7 @@ def get_model(
         decoder_type: 'transe', 'distmult', 'complex', 'tranr', 'rotate'.
     """
     
-    # 1. Initialize Shared Embeddings
-    # Creating these once ensures Protein X has a single source of truth
-    shared_embeddings = nn.ModuleDict({
-        nt: nn.Embedding(data[nt].num_nodes, hidden_channels)
-        for nt in data.node_types
-    })
-
-     # 2. Build Components
+     # Build Components
     kg_encoder = get_encoder(enc_type=kg_encoder_type, 
                                                                         data=data, 
                                                                         hidden_channels=hidden_channels, 
@@ -165,21 +216,21 @@ def get_model(
                                                                         heads=heads
                                                                         )
     
-    patient_aggregator = get_encoder(enc_type=patient_encoder_type, 
-                                                                        data=data, 
-                                                                        hidden_channels=hidden_channels, 
-                                                                        out_channels=out_channels, 
-                                                                        att_channels=att_channels,
-                                                                        num_layers=1, # aggregator only need to aggregate protein->patient information
-                                                                        dropout=dropout,
-                                                                        aggr=aggr,
-                                                                        negative_slop=negative_slope,
-                                                                        heads=heads
-                                                                        )
+    patient_aggregator = PatientAggregator( 
+                                                                data=data, 
+                                                                hidden_channels=hidden_channels, 
+                                                                out_channels=out_channels, 
+                                                                att_channels=att_channels,
+                                                                num_layers=1,
+                                                                dropout_rate=dropout,
+                                                                negative_slope=negative_slope,
+                                                                )
     
     # Ensure they share the embedding layer
-    kg_encoder.embeddings = shared_embeddings
-    patient_aggregator.embeddings = shared_embeddings
+    # Creating these once ensures Protein X has a single source of truth
+    shared_protein_embedding = nn.Embedding(data['Protein'].num_nodes, hidden_channels)
+    kg_encoder.embeddings = nn.ModuleDict({'Protein': shared_protein_embedding})
+    patient_aggregator.embeddings = nn.ModuleDict({'Protein': shared_protein_embedding})
 
     # 3. Assemble the Two-Stage Model
     model = TwoStageModel(

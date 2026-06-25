@@ -60,9 +60,9 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
     
     data['Patient'].x = patient_x
     data['Patient'].y = torch.tensor([G.nodes[pid]['y'] for pid in p_ids], dtype=torch.long)
-    data['Patient'].train_mask = torch.tensor([G.nodes[pid]['train_mask'] for pid in p_ids], dtype=torch.bool)
-    data['Patient'].val_mask = torch.tensor([G.nodes[pid]['val_mask'] for pid in p_ids], dtype=torch.bool)
-    data['Patient'].test_mask = torch.tensor([G.nodes[pid]['test_mask'] for pid in p_ids], dtype=torch.bool)
+    # data['Patient'].train_mask = torch.tensor([G.nodes[pid]['train_mask'] for pid in p_ids], dtype=torch.bool)
+    # data['Patient'].val_mask = torch.tensor([G.nodes[pid]['val_mask'] for pid in p_ids], dtype=torch.bool)
+    # data['Patient'].test_mask = torch.tensor([G.nodes[pid]['test_mask'] for pid in p_ids], dtype=torch.bool)
 
     # 3. Process ALL Node Types (Initialize x for all types)
     for n_type, mapping in node_mappings.items():
@@ -73,7 +73,7 @@ def convert_to_hetero_data(G: nx.MultiDiGraph):
         data[n_type].num_nodes = num_nodes
         
         # Initialize features to match Patient feature dimension: use torch.zeros or torch.randn. 
-        data[n_type].x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
+        # data[n_type].x = torch.zeros((num_nodes, feature_dim), dtype=torch.float)
         #print(f"Initialized {n_type} nodes: {num_nodes} nodes with feature dim {feature_dim}")
 
     # 4. Process Edges with separation

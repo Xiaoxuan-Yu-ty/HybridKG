@@ -13,8 +13,8 @@ from torch_scatter import scatter
 import os
 import sys
 
-from GateEmbeddingTask.HRGNN.HRGCNConv import HRGCNLayer
-from GateEmbeddingTask.HRGNN.HRGATConv import HRGATLayer
+from GateEmbeddingTask.HRGCNConv import HRGCNLayer
+from GateEmbeddingTask.HRGATConv import HRGATLayer
 
 
 class BaseHeteroEncoder(torch.nn.Module):
@@ -28,15 +28,15 @@ class BaseHeteroEncoder(torch.nn.Module):
         # project original features if have to hidden space
         # if not original feature, initialize embeddings
         
-        #self.input_lins = nn.ModuleDict()
+        self.input_lins = nn.ModuleDict()
         self.embeddings = nn.ModuleDict()
 
         for node_type in data.node_types:
-            # if hasattr(data[node_type], "x") and data[node_type].x is not None:
-            #     in_dim = data[node_type].x.size(-1)
-            #     self.input_lins[node_type] = nn.Linear(in_dim, hidden_channels)
-            # else:
-            self.embeddings[node_type] = nn.Embedding(data[node_type].num_nodes, hidden_channels)
+            if hasattr(data[node_type], "x") and data[node_type].x is not None:
+                in_dim = data[node_type].x.size(-1)
+                self.input_lins[node_type] = nn.Linear(in_dim, hidden_channels)
+            else:
+                self.embeddings[node_type] = nn.Embedding(data[node_type].num_nodes, hidden_channels)
     
     def _apply_activation_dropout(self, x_dict):
         x_dict = {k: F.relu(v) for k, v in x_dict.items()}
@@ -47,8 +47,8 @@ class BaseHeteroEncoder(torch.nn.Module):
         new_x_dict = {}
         for node_type in self.embeddings.keys(): # Handles nodes without x
             new_x_dict[node_type] = self.embeddings[node_type].weight
-        # for node_type in self.input_lins.keys(): # Handles nodes with x
-        #     new_x_dict[node_type] = self.input_lins[node_type](x_dict[node_type])
+        for node_type in self.input_lins.keys(): # Handles nodes with x
+            new_x_dict[node_type] = self.input_lins[node_type](x_dict[node_type])
         
         # Apply activation and dropout
         return {nt: F.dropout(F.elu(x), p=self.dropout_rate, training=self.training) 
