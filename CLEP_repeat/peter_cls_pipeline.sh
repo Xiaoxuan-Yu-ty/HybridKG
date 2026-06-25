@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=cls_emb
+#SBATCH --job-name=rotate(EL)
 #SBATCH --output=peter_logs/train_%j.out
 #SBATCH --error=peter_logs/train_%j.err
 #SBATCH --time=48:00:00
@@ -34,7 +34,7 @@ echo "$(date +"%D %T")"
 echo "Python path: $(which python)"
 echo "---------------------------------------------------------------------"
 
-/home/xyu/.conda/envs/firegnn/bin/python -m CLEP_repeat.cls_pipeline --num_trials=500
+/home/xyu/.conda/envs/firegnn/bin/python -m CLEP_repeat.retrain_pipeline --num_trials=500 --n_jobs=5 --retrain_edgelist
 
 echo "---------------------------------------------------------------------"
 echo "$(date +"%D %T")"

@@ -20,17 +20,17 @@ def parser():
 
     # graph generator args
     parser.add_argument("--DiseaseKG", type=str, default='PPI_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/oldcleaned_ppi_kg.pkl", 
+    parser.add_argument("--kg_disease", type=str, default="./datasets/base_kgs/oldcleaned_ppi_kg.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
-    parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
+    parser.add_argument("--kg_healthy", type=str, default="./data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/retrain_oldPPIKG_kge_cls", 
+    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/retrain_oldPPIKG_kge_cls2", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
-    parser.add_argument("--exp_path", type=str, default="../data/ADNI/cleaned_gene_expression_data.csv", 
+    parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--design", type=str, default="../data/ADNI/design_with_real_target.tsv", 
+    parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
     parser.add_argument("--control", default=0, 
                         help="Control group label")
@@ -56,7 +56,7 @@ def parser():
                                 'gradient_boost',])
     parser.add_argument("--n_jobs", type=int, default=1,
                         help="Number of Optuna HPO parallel jobs")
-    parser.add_argument("--num_trials", type=int, default=100,
+    parser.add_argument("--num_trials", type=int, default=500,
                         help="Number of Optuna HPO trials")
     parser.add_argument("--retrain_edgelist", action="store_true", help="Enable Retrain CLEP train-val-test Edgelist with Best-configs")
     
@@ -86,17 +86,17 @@ def main():
         os.makedirs(kge_output, exist_ok=True)
 
         # repeat CLEP by retraining the Edgelist with best hyperparameters saved in CLEP_resource
-        rotate_best_config_path = f"../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/pykeen_results_optim/best_pipeline/pipeline_config.json"
+        rotate_best_config_path = f"./CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/pykeen_results_optim/best_pipeline/pipeline_config.json"
         with open(rotate_best_config_path, 'r') as f:
             rotate_best_config = json.load(f)
 
         assert rotate_best_config is not None
 
-        if retrain_edgelist:
+        if args.retrain_edgelist:
             # get edge list path
-            train_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/train.edgelist'
-            val_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/validation.edgelist'
-            test_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/test.edgelist'
+            train_edge_path = f'./CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/train.edgelist'
+            val_edge_path = f'./CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/validation.edgelist'
+            test_edge_path = f'./CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/test.edgelist'
             train_val_test_triples = (train_edge_path, val_edge_path, test_edge_path)
 
             embeddings = do_retrain(
