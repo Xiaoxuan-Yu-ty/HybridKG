@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #SBATCH -n 1
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
+#SBATCH --output=leo_logs/train_%j.out
+#SBATCH --error=leo_logs/train_%j.err
 #SBATCH --gres=gpu:a100:1
 #SBATCH -t 48:00:00
 #SBATCH -J MLT
@@ -37,7 +37,7 @@ which python
 for model in "${MODEL[@]}"; do
     echo "Running model: $model"
     # standard 'python' will now point to your activated firegnn environment automatically
-    /home/xyu/.conda/envs/firegnn/bin/python -m GateEmbeddingTask.TwoStageMLT.train_pipeline --encoder_type "$model" --aggregator_type "$model" --epochs 500
+    /home/xyu/.conda/envs/firegnn/bin/python -m GateEmbeddingTask.TwoStageMLT.train_pipeline --num_trial 50  --epochs 200
 done
 
 echo "-------------------------------------------------------------------"

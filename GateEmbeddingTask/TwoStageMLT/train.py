@@ -94,15 +94,14 @@ def hierarchical_attention_loss(
 def serialize_attention_weight(attention_weights:List[Dict]):
     
     serializable_att = {}
-    try:      
-        for node_type, content in attention_weights[-1].items():
-            serializable_att[node_type] = {
-                "relation_names": content["relation_names"], # a list of strings
-                "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
-            }
-    except:
-        for edge_type, attention in attention_weights[-1].items():
-            serializable_att[edge_type] = attention.detach().cpu().tolist()
+    attention_weights = attention_weights[-1] if isinstance(attention_weights, list) else attention_weights
+     
+    for node_type, content in attention_weights.items():
+        serializable_att[node_type] = {
+            "relation_names": content["relation_names"], # a list of strings
+            "attention": content["attention"].detach().cpu().tolist() # Convert Tensor -> List
+        }
+
     
     return serializable_att
     
@@ -306,6 +305,7 @@ def run_inner_hpo(
     num_patients,
     num_classes,
     is_multi_metrics,
+    outer_fold,
 ):
     """
     Inner HPO loop: 3-fold CV over trainval_idx only.
@@ -417,12 +417,12 @@ def run_inner_hpo(
         return float(np.mean(inner_composites))
 
     study = optuna.create_study(storage=db_url,
-                                        load_if_exists=True,
-                                        direction="maximize", 
-                                        study_name="Inner-Loop Cross Validation for HPO",
-                                        )
-    
-    study.optimize(inner_objective, n_trials=args.num_trial, n_jobs=args.n_jobs, show_progress_bar=True)
+                                load_if_exists=True,
+                                direction="maximize", 
+                                study_name=f"inner_hpo_outer_fold_{outer_fold}",
+                                )
+    # n_jobs>1 can cause shared data mutation
+    study.optimize(inner_objective, n_trials=args.num_trial, n_jobs=1, show_progress_bar=True)
     print(f"  Best inner params: {study.best_params}")
     return study.best_params
 
@@ -529,10 +529,14 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
     ):
         print(f"\n=== Outer Fold {outer_fold+1}/5 ===")
 
-        # --- Inner HPO (test_idx never used here) ---
-        if do_hpo and best_params is None and db_url is not None:
+        fold_best_params = best_params  # use provided params if given
+        
+        if do_hpo and fold_best_params is None:
+            if db_url is None:
+                raise ValueError("db_url required when do_hpo=True")
             print("Starting inner HPO...")
-            best_params = run_inner_hpo(
+            
+            fold_best_params = run_inner_hpo(
                 db_url=db_url,
                 data=data,
                 args=args,
@@ -542,6 +546,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
                 num_patients=num_patients,
                 num_classes=num_classes,
                 is_multi_metrics=is_multi_metrics,
+                outer_fold=outer_fold,
             )
 
         # --- Retrain on trainval, evaluate on test ---
@@ -555,7 +560,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
             y_all=y_all,
             num_patients=num_patients,
             num_classes=num_classes,
-            best_params=best_params,
+            best_params=fold_best_params,
         )
 
         final_results[f"fold_{outer_fold}"] = {
