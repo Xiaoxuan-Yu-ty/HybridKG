@@ -41,8 +41,8 @@ class RelationAttentionAggregation(nn.Module):
             rel_key = self.rel_to_key(rel)
             self.rel_lins[rel_key] = nn.Linear(in_dim, out_dim, bias=False,)
 
-        # Self transformation
-        self.self_lin = nn.Linear(in_dim, out_dim, bias=False,)
+        # Self transformation (remove self-loop edge)
+        # self.self_lin = nn.Linear(in_dim, out_dim, bias=False,)
 
         # Semantic relation attention
         self.query_lin = nn.Linear(out_dim, att_dim, bias=False,)
@@ -94,12 +94,13 @@ class RelationAttentionAggregation(nn.Module):
         # target node features
         x_target = x_dict[self.target_type] # [N, in_dim]
         num_target_nodes = x_target.size(0)
-        # self message
-        self_msg = self.self_lin(x_target) # W_self * h_i
+       
+        # self message (remove self-loop edge)
+        # self_msg = self.self_lin(x_target) # W_self * h_i
 
         # relation-wise aggregation
-        relation_messages = [self_msg]
-        relation_names = ["self"]
+        relation_messages = []
+        relation_names = []
         for rel in self.relations:
 
             src_type, edge_type, dst_type = rel
@@ -128,7 +129,7 @@ class RelationAttentionAggregation(nn.Module):
         msg_tensor = torch.stack(relation_messages, dim=1,) # [N_dst, num_relations+1, out_dim]
 
         N, R, D = msg_tensor.size()
-        query = self.query_lin(self_msg)     # [N, att_dim]
+        query = self.query_lin(x_target)     # [N, att_dim]
         keys = self.key_lin(msg_tensor)      # [N, R, att_dim]
         query = query.unsqueeze(1).expand(-1, R, -1) # -> [N, R, att_dim]
 

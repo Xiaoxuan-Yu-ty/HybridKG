@@ -47,10 +47,10 @@ class HRGATLayer(nn.Module):
             # edge attention vector
             self.rel_att[rel_key] = nn.Parameter(torch.empty(2 * out_dim))
 
-        # Self-loop transformations
-        self.self_lins = nn.ModuleDict()
-        for node_type in self.node_types:
-            self.self_lins[node_type] = nn.Linear(in_dim, out_dim, bias=False,)
+        # Self-loop transformations (remove self-loop)
+        # self.self_lins = nn.ModuleDict()
+        # for node_type in self.node_types:
+        #     self.self_lins[node_type] = nn.Linear(in_dim, out_dim, bias=False,)
 
         # Semantic relation attention
         self.query_lin = nn.Linear(out_dim, att_dim, bias=False,)
@@ -64,13 +64,13 @@ class HRGATLayer(nn.Module):
         for lin in self.rel_lins.values():
             lin.reset_parameters()
 
-        for lin in self.self_lins.values():
-            lin.reset_parameters()
-
+        # for lin in self.self_lins.values():
+        #     lin.reset_parameters()
         nn.init.xavier_uniform_(self.semantic_att.weight)
         
         for att in self.rel_att.values():
             nn.init.xavier_uniform_(att.unsqueeze(0))
+        
 
     @staticmethod
     def rel_to_key(rel):
@@ -130,14 +130,14 @@ class HRGATLayer(nn.Module):
             for node_type in self.node_types
         }
 
-        # Self-loop messages
-        for node_type in self.node_types:
+        # Self-loop messages (remove self-loop message aggregation, because it dominates the attention weight)
+        # for node_type in self.node_types:
 
-            self_msg = self.self_lins[node_type](x_dict[node_type])
+        #     self_msg = self.self_lins[node_type](x_dict[node_type])
 
-            relation_outputs[node_type].append(self_msg)
+        #     relation_outputs[node_type].append(self_msg)
 
-            relation_names[node_type].append("self")
+        #     relation_names[node_type].append("self")
 
         # Relation-wise propagation
         for rel in self.edge_types:
@@ -165,13 +165,14 @@ class HRGATLayer(nn.Module):
         semantic_attention_dict = {}
 
         for node_type in self.node_types:
-
+            if len(relation_outputs[node_type]) == 0:
+                continue  # skip nodes with no incoming edges
             # messages from all relations: [N, R, out_dim]
             rel_tensor = torch.stack(relation_outputs[node_type],dim=1,)
             N, R, D = rel_tensor.size()
 
-            # self message as query: [N, att_dim]
-            query = self.query_lin(relation_outputs[node_type][0])
+            # Input feature message as query: [N, att_dim]
+            query = self.query_lin(x_dict[node_type])
 
             # keys: [N, R, att_dim]
             keys = self.key_lin(rel_tensor)

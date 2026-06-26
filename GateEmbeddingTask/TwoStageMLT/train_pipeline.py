@@ -14,24 +14,16 @@ import networkx as nx
 import argparse
 import os
 import sys
-import math
-from tqdm import tqdm
-
-import optuna
-from sklearn.model_selection import StratifiedKFold
 
 from data_processing.pyg_graph_generator import generat_and_save_hybrid
 from data_processing.sample_scoring import *
 from GateEmbeddingTask.train_utils import (
-    compute_link_loss, 
-    evaluate_link,
     build_data_dict,
     set_seed,
     convert_to_hetero_data,
     get_device
 )
-from GateEmbeddingTask.TwoStageMLT.TwoStageModel import get_model, TwoStageModel
-from GateEmbeddingTask.TwoStageMLT.train import train_epoch, train, hpo_cross_validate, objective
+from GateEmbeddingTask.TwoStageMLT.train import nested_cross_validate, retrain_and_evaluate
 
 
 def parse():
@@ -191,33 +183,18 @@ def main():
     # 3.1. Prepare HeteroData
     data, node_mappings = convert_to_hetero_data(network)
     data = build_data_dict(data).to(device)
+    y_all = data['Patient'].y.cpu().numpy()
 
     # 3.2. HPO (Optuna)
     if args.hpo:
-        print("\n--- Starting Optuna HPO ---")
-        study = optuna.create_study(
-            storage=f"sqlite:///{final_output_dir}/optuna.db",
-            load_if_exists=True,
-            direction="maximize", 
-            study_name=f"{args.dataset}_{args.encoder_type}_{args.decoder_type}")
-        
-        # Wrap objective to pass data, args, device
-        objective_func = lambda trial: objective(trial, data, args, device, is_multi_metrics=False)
-        study.optimize(objective_func, n_trials=args.num_trial, n_jobs=1)
-        
-        print("\nBest Trial Composite Score:", study.best_value)
-        print("Best Params:", study.best_params)
-
-        # Save Study Best Params
-        with open(os.path.join(final_output_dir, "best_hpo_params.json"), "w") as f:
-            json.dump(study.best_params, f, indent=4)
-
-        # 3.3. Retrain with best hyperparameters (Cross Validation)
-        print("\n--- Starting Retrain with best hyperparameters (Cross Validation) ---")
-        final_results, attention_archive = hpo_cross_validate(data, 
-                                                            study.best_params, 
-                                                            args, 
-                                                            device)
+        final_results, attention_archive = nested_cross_validate(
+        data=data,
+        args=args,
+        device=device,
+        db_url=f"sqlite:///{final_output_dir}/optuna.db",
+        is_multi_metrics=True,
+        )
+    
     else:
         # 3.3. Retrain with best hyperparameters (Cross Validation)
         print("\n--- Starting training with (best) hyperparameters (Cross Validation) ---")
@@ -237,11 +214,16 @@ def main():
             "lr":args.lr,
             "weight_decay":args.weight_decay
         }
-
-        final_results, attention_archive = hpo_cross_validate(data=data,
-                                                              best_params=hyperparameters,
-                                                              args=args,
-                                                              device=device)
+        
+        final_results, attention_archive = nested_cross_validate(
+           data=data,
+           args=args,
+           device=device,
+           db_url=None,
+           do_hpo=False,
+           best_params=hyperparameters,
+           is_multi_metrics=False
+        )
         
     # Calculate Average Final Metrics
     avg_metrics = {}
@@ -263,8 +245,7 @@ def main():
             pickle.dump(attention_archive, f)
         print(f"Attention weights saved to {attention_path}")
 
-    
-    
+     
     
 if __name__ == "__main__":
     main()     
