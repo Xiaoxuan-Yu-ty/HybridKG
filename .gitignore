@@ -72,3 +72,5 @@ CLEP_repeat/peter_logs/
 environment.yml
 test_import.py
 test_peter.sh
+
+GateEmbeddingTask/TwoStageMLT/results(self_loop_attention)/
