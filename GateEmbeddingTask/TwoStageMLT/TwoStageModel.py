@@ -101,11 +101,12 @@ class PatientAggregator(nn.Module):
         self.fusion = nn.Linear(hidden_channels, out_channels)  # projects to out_channels
 
     
-    def forward(self, x_dict, edge_index_dict):
+    def forward(self, x_dict, edge_index_dict, patient_x):
         
-        h_gene = self.proj_gene(self.data['Patient'].x)
-
+        h_gene = self.proj_gene(patient_x)
+        # h_gene = x_dict['Patient']
         protein_embeddings = x_dict['Protein']
+
         new_x_dict = {'Patient':h_gene, 'Protein': protein_embeddings}
         
         # Protein->Patient message aggregation: no self-loop, no residual connection, purely protein aggregation
@@ -125,7 +126,7 @@ class TwoStageModel(torch.nn.Module):
                  data:HeteroData, 
                  encoder,
                  aggregator, 
-                 decoder_type:str,
+                 decoder,
                  out_channels:int, 
                  num_classes:int,
                  ):
@@ -133,9 +134,7 @@ class TwoStageModel(torch.nn.Module):
         self.encoder = encoder
         
         self.aggregator = aggregator
-        self.decoder = LinkDecoder(edge_types=data.edge_types, 
-                                    out_channels=out_channels,
-                                    model_type=decoder_type)
+        self.decoder = decoder
         
         self.classifier = nn.Linear(out_channels, num_classes)
 
@@ -144,12 +143,13 @@ class TwoStageModel(torch.nn.Module):
         h_dict, _= self.encoder(x_dict, static_edge_index_dict)
         return h_dict
     
-    def aggregate(self, h_dict, dynamic_edge_index_dict):
+    def aggregate(self, h_dict, dynamic_edge_index_dict, patient_x):
         h_final, attention_weights = self.aggregator(h_dict, 
-                                                    dynamic_edge_index_dict)
+                                                    dynamic_edge_index_dict,
+                                                    patient_x)
         h_patient = self.classifier(h_final)
         
-        return h_final, h_patient, attention_weights
+        return h_final, h_patient, [attention_weights]
     
     def decode(self, h_dict, edge_type, edge_index):
         # Used for Link Prediction loss
@@ -186,7 +186,7 @@ def get_model(
     kg_encoder = get_encoder(enc_type=kg_encoder_type, 
                             data=data, 
                             hidden_channels=hidden_channels, 
-                            out_channels=out_channels, 
+                            out_channels=hidden_channels, 
                             att_channels=att_channels,
                             num_layers=num_layers, 
                             dropout=dropout,
@@ -197,20 +197,23 @@ def get_model(
     # aggregator: not initialize any nodes, take the output from encoder, initialize dynamic edge_types (Proetin--Patient)
     patient_aggregator = PatientAggregator( 
                                             data=data, 
-                                            hidden_channels=out_channels, 
+                                            hidden_channels=hidden_channels, 
                                             out_channels=out_channels, 
                                             att_channels=att_channels,
                                             num_layers=1,
                                             dropout_rate=dropout,
                                             negative_slope=negative_slope,
                                             )
+    decoder = LinkDecoder(edge_types=data.edge_types, 
+                                    out_channels=hidden_channels,
+                                    model_type=decoder_type)
 
     # 3. Assemble the Two-Stage Model
     model = TwoStageModel(
         data=data,
         encoder=kg_encoder,
         aggregator=patient_aggregator,
-        decoder_type=decoder_type,
+        decoder=decoder,
         out_channels=out_channels,
         num_classes=num_classes
     )

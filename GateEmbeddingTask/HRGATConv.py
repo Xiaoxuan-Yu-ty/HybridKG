@@ -52,6 +52,12 @@ class HRGATLayer(nn.Module):
         # for node_type in self.node_types:
         #     self.self_lins[node_type] = nn.Linear(in_dim, out_dim, bias=False,)
 
+        # add a fallback projection per node type to handle NodeTypes without edges provided:
+        self.fallback_lins = nn.ModuleDict({
+            node_type: nn.Linear(in_dim, out_dim, bias=False)
+            for node_type in self.node_types
+        })
+
         # Semantic relation attention
         self.query_lin = nn.Linear(in_dim, att_dim, bias=False,)
         self.key_lin = nn.Linear(out_dim, att_dim, bias=False,)
@@ -70,6 +76,9 @@ class HRGATLayer(nn.Module):
         
         for att in self.rel_att.values():
             nn.init.xavier_uniform_(att.unsqueeze(0))
+        
+        for lin in self.fallback_lins.values():
+            lin.reset_parameters()
         
 
     @staticmethod
@@ -166,7 +175,22 @@ class HRGATLayer(nn.Module):
 
         for node_type in self.node_types:
             if len(relation_outputs[node_type]) == 0:
-                continue  # skip nodes with no incoming edges
+                # No incoming edges — output a linear projection of input features
+                # Keeps node type alive in out_dict with a meaningful transformation
+                if node_type in x_dict:
+                    # F.elu() to non-linearize the linear projection, consistent with the other NT output
+                    out_dict[node_type] = F.elu(
+                        self.fallback_lins[node_type](x_dict[node_type])
+                    )
+                    semantic_attention_dict[node_type] = {
+                        "relation_names": [],
+                        "attention": torch.zeros(
+                            x_dict[node_type].size(0), 0,
+                            device=x_dict[node_type].device
+                        )  # empty attention — no relations
+                    }
+                continue
+                
             # messages from all relations: [N, R, out_dim]
             rel_tensor = torch.stack(relation_outputs[node_type],dim=1,)
             N, R, D = rel_tensor.size()

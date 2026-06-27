@@ -91,11 +91,12 @@ def hierarchical_attention_loss(
 
     return att_loss
 
-def serialize_attention_weight(attention_weights:List[Dict]):
+def serialize_attention_weight(attention_weights):
     
     serializable_att = {}
     attention_weights = attention_weights[-1] if isinstance(attention_weights, list) else attention_weights
-     
+    assert isinstance(attention_weights, dict)
+
     for node_type, content in attention_weights.items():
         serializable_att[node_type] = {
             "relation_names": content["relation_names"], # a list of strings
@@ -137,7 +138,8 @@ def train_epoch(model:TwoStageModel,
                     static_edge_index_dict = data.static_edge_index_dict,
                     )
     h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, 
-                                           dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+                                           dynamic_edge_index_dict= data.dynamic_edge_index_dict,
+                                           patient_x=data['Patient'].x)
     
     mask = data['Patient'].train_mask
 
@@ -186,7 +188,9 @@ def evaluate_cls(model, data, mask_name):
     h_dict = model(x_dict=data.x_dict, 
                         static_edge_index_dict = data.static_edge_index_dict,
                         )
-    h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, dynamic_edge_index_dict= data.dynamic_edge_index_dict)
+    h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, 
+                                                           dynamic_edge_index_dict= data.dynamic_edge_index_dict,
+                                                           patient_x=data['Patient'].x)
     
    
     mask = data['Patient'][mask_name] 
@@ -328,7 +332,7 @@ def run_inner_hpo(
         num_negatives = trial.suggest_categorical("num_negatives", [50, 100, 200, 500])
         pos_sample_cap = trial.suggest_categorical("pos_sample_cap", [50, 100, 200, 500])
 
-        inner_skf = StratifiedKFold(n_splits=1, shuffle=True, random_state=args.seed)
+        inner_skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=args.seed)
         y_trainval = y_all[trainval_idx]
         eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
         inner_composites = []
@@ -580,15 +584,15 @@ def parse():
     parser = argparse.ArgumentParser(description="Two Stage Multi-Task-Learning Model HPO & Training Pipeline")
 
     # Paths
-    parser.add_argument("--graph_path", type=str, default="../../datasets/AD_KGs/G_adni_merge_ecdf.pkl")
+    parser.add_argument("--graph_path", type=str, default="./datasets/ADNI_KGs/ecdf_5/AD_KG/G_adni_merge_ecdf.pkl")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./results")
+    parser.add_argument("--output_dir", type=str, default="./GateEmbeddingTask/TwoStageMLT/results")
     parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
-    parser.add_argument("--method", type=str, default="dual_hybrid", choices=['dual_hybrid','merge'], 
+    parser.add_argument("--method", type=str, default="merge", choices=['dual_hybrid','merge'], 
                         help="Network construction strategy.")
-    parser.add_argument("--encoder_type", type=str, default='rgat', 
+    parser.add_argument("--encoder_type", type=str, default='hrgat', 
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--aggregator_type", type=str, default='rgat',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])

@@ -86,22 +86,46 @@ class HRGATEncoder(BaseHeteroEncoder):
             ) for i in range(num_layers)
         ])
 
+        # Residual projection for last layer if dims differ
+        self.residual_proj = None
+        if hidden_channels != out_channels:
+            self.residual_proj = nn.ModuleDict({
+                node_type: nn.Linear(hidden_channels, out_channels, bias=False)
+                for node_type in data.node_types
+            })
+
     def forward(self, x_dict, edge_index_dict):
         x_dict = self.get_initial_x_dict(x_dict)
-        
         attention_weights = []
-        for layer in self.layers:
+        
+        for i, layer in enumerate(self.layers):
             out_dict, att_dict = layer(x_dict, edge_index_dict)
+            is_last_layer = (i == self.num_layers - 1)
             
-            # Apply Residuals
-            layer_x_dict = {
-                nt: (F.dropout(F.elu(h), p=self.dropout_rate, training=self.training) + x_dict.get(nt, 0))
-                if h.size(-1) == x_dict.get(nt, torch.tensor(0)).size(-1) else h
-                for nt, h in out_dict.items()
-            }
+            layer_x_dict = {}
+            for nt, h in out_dict.items():
+                h = F.dropout(F.elu(h), p=self.dropout_rate, training=self.training)
+                
+                prev = x_dict.get(nt)
+                if prev is None:
+                    layer_x_dict[nt] = h
+                
+                elif h.size(-1) == prev.size(-1):
+                    # Same dim — standard residual ✓
+                    layer_x_dict[nt] = h + prev
+                
+                elif is_last_layer and self.residual_proj is not None:
+                    # Last layer dim change — projected residual
+                    layer_x_dict[nt] = h + self.residual_proj[nt](prev)
+                
+                else:
+                    # Intermediate dim change — no residual
+                    # (shouldn't happen with current layer config)
+                    layer_x_dict[nt] = h
+            
             attention_weights.append(att_dict)
             x_dict = layer_x_dict
-
+        
         return x_dict, attention_weights
 
 class HRGCNEncoder(BaseHeteroEncoder):
@@ -125,20 +149,45 @@ class HRGCNEncoder(BaseHeteroEncoder):
             ) for i in range(num_layers)
         ])
 
+        # Residual projection for last layer if dims differ
+        self.residual_proj = None
+        if hidden_channels != out_channels:
+            self.residual_proj = nn.ModuleDict({
+                node_type: nn.Linear(hidden_channels, out_channels, bias=False)
+                for node_type in data.node_types
+            })
+
     def forward(self, x_dict, edge_index_dict):
         x_dict = self.get_initial_x_dict(x_dict)
-        
         attention_weights = []
-        for layer in self.layers:
+        
+        for i, layer in enumerate(self.layers):
             out_dict, att_dict = layer(x_dict, edge_index_dict)
+            is_last_layer = (i == self.num_layers - 1)
             
-            # Apply Residuals
-            x_dict = {
-                nt: (F.dropout(F.elu(h), p=self.dropout_rate, training=self.training) + x_dict.get(nt, 0))
-                if h.size(-1) == x_dict.get(nt, torch.tensor(0)).size(-1) else h
-                for nt, h in out_dict.items()
-            }
+            layer_x_dict = {}
+            for nt, h in out_dict.items():
+                h = F.dropout(F.elu(h), p=self.dropout_rate, training=self.training)
+                
+                prev = x_dict.get(nt)
+                if prev is None:
+                    layer_x_dict[nt] = h
+                
+                elif h.size(-1) == prev.size(-1):
+                    # Same dim — standard residual ✓
+                    layer_x_dict[nt] = h + prev
+                
+                elif is_last_layer and self.residual_proj is not None:
+                    # Last layer dim change — projected residual
+                    layer_x_dict[nt] = h + self.residual_proj[nt](prev)
+                
+                else:
+                    # Intermediate dim change — no residual
+                    # (shouldn't happen with current layer config)
+                    layer_x_dict[nt] = h
+            
             attention_weights.append(att_dict)
+            x_dict = layer_x_dict
         
         return x_dict, attention_weights
     
@@ -176,24 +225,6 @@ class HGTEncoder(BaseHeteroEncoder):
                 x_dict = self._apply_activation_dropout(x_dict)
         return x_dict, None
     
-# class HGTEncoder(BaseHeteroEncoder):
-#     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2):
-#         super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate)
-#         self.convs = torch.nn.ModuleList()
-#         metadata = data.metadata()
-        
-#         for i in range(num_layers):
-#             in_c = hidden_channels
-#             out_c = out_channels if i == num_layers - 1 else hidden_channels
-#             self.convs.append(HGTConv(in_c, out_c, metadata=metadata, heads=heads))
-
-#     def forward(self, x_dict, edge_index_dict):
-#         x_dict = self.get_initial_x_dict(x_dict)
-#         for i, conv in enumerate(self.convs):
-#             x_dict = conv(x_dict, edge_index_dict)
-#             if i < self.num_layers - 1:
-#                 x_dict = self._apply_activation_dropout(x_dict)
-#         return x_dict, None
 
 class HGATEncoder(BaseHeteroEncoder):
     def __init__(self, data, hidden_channels, out_channels, num_layers, dropout_rate, heads=2, aggr='sum', negative_slope=0.2):
