@@ -75,3 +75,4 @@ test_peter.sh
 GateEmbeddingTask/TwoStageMLT/results(self_loop_attention)/
 GateEmbeddingTask/TwoStageMLT/model_structure.md
 EdgeAssignmentTask/neighborhood_selection/ideas.md
+GateEmbeddingTask/TwoStageMLT/results_old/

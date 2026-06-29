@@ -57,7 +57,7 @@ def parse():
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
     parser.add_argument("--aggregator_type", type=str, default='hrgat',
                         choices=['hrgat', 'hrgcn', 'rgcn', 'rgat', 'hgt', 'hgat', 'graphsage'])
-    parser.add_argument("--decoder_type", type=str, default='distmult',
+    parser.add_argument("--decoder_type", type=str, default='rotate',
                         choices=['transe', 'transr', 'rotate', 'complex', 'distmult'],
                         help='KGE model style link prediction scoring function to choose.')
 
