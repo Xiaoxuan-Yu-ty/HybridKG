@@ -72,9 +72,9 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--num_trial", type=int, default=2, help="Number of trials for HPO process.")
     parser.add_argument("--n_jobs", type=int, default=2, help="Number of jobs in Optuna HPO process.")
-    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--negative_sampling_ratio", type=float, default=0.1)
