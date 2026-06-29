@@ -539,19 +539,22 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
             if db_url is None:
                 raise ValueError("db_url required when do_hpo=True")
             print("Starting inner HPO...")
-            
-            fold_best_params = run_inner_hpo(
-                db_url=db_url,
-                data=data,
-                args=args,
-                device=device,
-                trainval_idx=trainval_idx,
-                y_all=y_all,
-                num_patients=num_patients,
-                num_classes=num_classes,
-                is_multi_metrics=is_multi_metrics,
-                outer_fold=outer_fold,
-            )
+            try:
+                fold_best_params = run_inner_hpo(
+                    db_url=db_url,
+                    data=data,
+                    args=args,
+                    device=device,
+                    trainval_idx=trainval_idx,
+                    y_all=y_all,
+                    num_patients=num_patients,
+                    num_classes=num_classes,
+                    is_multi_metrics=is_multi_metrics,
+                    outer_fold=outer_fold,
+                )
+            except Exception as e:
+                print(f"Fold {outer_fold} HPO failed: {e}")
+                raise
 
         # --- Retrain on trainval, evaluate on test ---
         print("Retraining with best params...")
