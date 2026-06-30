@@ -191,8 +191,6 @@ def evaluate_cls(model, data, mask_name):
     h_final, h_patient,attention_weights = model.aggregate(h_dict=h_dict, 
                                                            dynamic_edge_index_dict= data.dynamic_edge_index_dict,
                                                            patient_x=data['Patient'].x)
-    
-   
     mask = data['Patient'][mask_name] 
     y_true = data['Patient'].y[mask].cpu().numpy()
     logits = h_patient[mask]
