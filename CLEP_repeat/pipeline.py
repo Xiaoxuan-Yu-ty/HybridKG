@@ -19,19 +19,18 @@ def parser():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # graph generator args
-    parser.add_argument("--DiseaseKG", type=str, default='PPI_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/oldcleaned_ppi_kg.pkl", 
+    parser.add_argument("--DiseaseKG", type=str, default='AD_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
+    parser.add_argument("--kg_disease", type=str, default="./datasets/base_kgs/ad_kg_with_reverse_edges.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
-    parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
+    parser.add_argument("--kg_healthy", type=str, default="./data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/retrain_oldPPIKG_kge_cls", 
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/results/retrain_oldPPIKG_kge_cls", 
+    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/hpo_kge", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
-    parser.add_argument("--exp_path", type=str, default="../data/ADNI/cleaned_gene_expression_data.csv", 
+    parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--design", type=str, default="../data/ADNI/design_with_real_target.tsv", 
+    parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
     parser.add_argument("--control", default=0, 
                         help="Control group label")
@@ -80,118 +79,70 @@ def main():
         'all': do_average
     }
     # Execute
-    for threshold in [1,1.5, 2.5, 5, 10, 20]:
+    for threshold in [1.5, 5]:
         
-        overall_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}')
+        overall_output = os.path.join(args.output_dir,args.DiseaseKG,f'{args.scoring_type}_{threshold}')
         kge_output = os.path.join(overall_output, args.kge_model)
         os.makedirs(kge_output, exist_ok=True)
 
-       
-        print(f"\nRunning Sample Scoring {args.scoring_type} with threshold {threshold}...")
-        process_and_save(
-            data=data,
-            design=design,
-            threshold=threshold,
-            control=args.control,
-            do_function=method_map[args.scoring_type],
-            output_dir=overall_output,
-            method=args.scoring_type
-            )
+        # Grpah existing checkpoint: 
+        #graph_path = "./CLEP_repeat/results/hpo_kge/AD_KG/ecdf_1.5/G_adni_OldTarget_DiseaseKG_ecdf_1.5.pkl"
+        graph_path = os.path.join(overall_output, f"Edgelist_{args.dataset}_{args.graph_method}_{args.scoring_type}_{threshold}.csv")
         
-        # 2. generate network
-        scoring_method = args.scoring_type + f"_{threshold}"
-        scoring_path = os.path.join(overall_output,f'sample_scoring_ecdf.csv')
-        print(f"\n--- Initializing Network Generation: dataset:{args.dataset} |{args.graph_method} | {scoring_method}---")
-        
-        network=None
-        graph_df=None
-        try:
-            # The main logic call
-            network, graph_df, summary = generat_and_save_hybrid(
-                exp_path=args.exp_path,
-                scoring_path=scoring_path,
-                kg_disease_path=args.kg_disease,
-                kg_health_path=args.kg_healthy,
+        if os.path.exists(graph_path):
+            print(f"\nGraph exist, load graph Edgelist from {graph_path}")
+            graph_df= pd.read_csv(graph_path)
+        else:
+            print(f"\nRunning Sample Scoring {args.scoring_type} with threshold {threshold}...")
+            process_and_save(
+                data=data,
+                design=design,
+                threshold=threshold,
+                control=args.control,
+                do_function=method_map[args.scoring_type],
                 output_dir=overall_output,
-                process_method=args.graph_method,
-                scoring_method=scoring_method,
-                dataset=args.dataset
-            )
+                method=args.scoring_type
+                )
             
-            print("\nProcess Complete.")
-            print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
-    if args.cls_only:
-        data['label'] = design['Target'].to_list()
-        embeddings = data
-
-        overall_output = args.output_dir
-        kge_output = os.path.join(overall_output, 'raw')
-        os.makedirs(kge_output, exist_ok=True)
-   
-    else:
-        method_map = {
-            'ecdf': do_radical_search,
-            #'logfc': do_biological_logfc,
-            'std': do_std,
-            'all': do_average
-        }
-        # Execute
-        for threshold in [1,1.5, 2.5, 5, 10, 20]:
+            # 2. generate network
+            scoring_method = args.scoring_type + f"_{threshold}"
+            scoring_path = os.path.join(overall_output,f'sample_scoring_ecdf.csv')
+            print(f"\n--- Initializing Network Generation: dataset:{args.dataset} |{args.graph_method} | {scoring_method}---")
             
-            overall_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}')
-            kge_output = os.path.join(overall_output, args.kge_model)
-            os.makedirs(kge_output, exist_ok=True)
-
-            if args.kge_hpo:
-                print(f"\nRunning Sample Scoring {args.scoring_type} with threshold {threshold}...")
-                process_and_save(
-                    data=data,
-                    design=design,
-                    threshold=threshold,
-                    control=args.control,
-                    do_function=method_map[args.scoring_type],
+            network=None
+            graph_df=None
+            try:
+                # The main logic call
+                network, graph_df, summary = generat_and_save_hybrid(
+                    exp_path=args.exp_path,
+                    scoring_path=scoring_path,
+                    kg_disease_path=args.kg_disease,
+                    kg_health_path=args.kg_healthy,
                     output_dir=overall_output,
-                    method=args.scoring_type
-                    )
+                    process_method=args.graph_method,
+                    scoring_method=scoring_method,
+                    dataset=args.dataset
+                )
                 
-                # 2. generate network
-                scoring_method = args.scoring_type + f"_{threshold}"
-                scoring_path = os.path.join(overall_output,f'sample_scoring_ecdf.csv')
-                print(f"\n--- Initializing Network Generation: dataset:{args.dataset} |{args.graph_method} | {scoring_method}---")
-                
-                network=None
-                graph_df=None
-                try:
-                    # The main logic call
-                    network, graph_df, summary = generat_and_save_hybrid(
-                        exp_path=args.exp_path,
-                        scoring_path=scoring_path,
-                        kg_disease_path=args.kg_disease,
-                        kg_health_path=args.kg_healthy,
-                        output_dir=overall_output,
-                        process_method=args.graph_method,
-                        scoring_method=scoring_method,
-                        dataset=args.dataset
-                    )
-                    
-                    print("\nProcess Complete.")
-                    print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
-
-                except Exception as e:
+                print("\nProcess Complete.")
+                print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
+            
+            except Exception as e:
                     print(f"Critical Error during network generation: {e}")
 
-                # 3. do KGE to get sample embeddings (only if graph_df was created)
-                if graph_df is None:
-                    print("No graph edgelist available — skipping KGE and classification.")
-                    sys.exit(1)
 
-                print("\n-------------Do KGE---------------------------------------------")
+        # 3. do KGE to get sample embeddings (only if graph_df was created)
+        if graph_df is None:
+            print("No graph edgelist available — skipping KGE and classification.")
+            sys.exit(1)
 
-                hpo_config_path = f"../PyKeen/configs/{args.kge_model}_model_config.json"
-                with open(hpo_config_path, 'r') as f:
-                    hpo_config_dict = json.load(f)
+        print("\n-------------Do KGE---------------------------------------------")
 
-                assert hpo_config_dict is not None
+        hpo_config_path = f"./PyKeen/configs/{args.kge_model}_model_config.json"
+        with open(hpo_config_path, 'r') as f:
+            hpo_config_dict = json.load(f)
+
+        assert hpo_config_dict is not None
 
         # Remove ALL structural keys causing duplicates or path errors
         if "pipeline" in hpo_config_dict:
@@ -201,9 +152,9 @@ def main():
             inner_pipeline.pop("testing", None)
             inner_pipeline.pop("validation", None)
             
-            # REMOVE outdated model_kwargs
-            if "model_kwargs" in inner_pipeline:
-                inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
+        # REMOVE outdated model_kwargs
+        if "model_kwargs" in inner_pipeline:
+            inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
 
         embeddings = do_kge(edgelist=graph_df,
                             design=design,
@@ -216,60 +167,13 @@ def main():
         
         embeddings.to_csv(os.path.join(kge_output,'embedding.csv'))
         
-                # Remove ALL structural keys causing duplicates or path errors
-                if "pipeline" in hpo_config_dict:
-                    inner_pipeline = hpo_config_dict["pipeline"]
-                    inner_pipeline.pop("dataset", None)
-                    inner_pipeline.pop("training", None)
-                    inner_pipeline.pop("testing", None)
-                    inner_pipeline.pop("validation", None)
-                    
-                    # REMOVE outdated model_kwargs
-                    if "model_kwargs" in inner_pipeline:
-                        inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
-        
-            # if args.kge_hpo:
-                embeddings = do_kge(edgelist=graph_df,
-                                    design=design,
-                                    out=kge_output,
-                                    model_config=hpo_config_dict,
-                                    return_patients=True,
-                                    train_size=0.8, validation_size=0.1,
-                                    complex_embedding=False)
-            
-            # -----------------------------------------Retrain EdgeList-----------------------------------------------
-            else:
-                rotate_best_config_path = f"../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/pykeen_results_optim/best_pipeline/pipeline_config.json"
-                with open(rotate_best_config_path, 'r') as f:
-                    rotate_best_config = json.load(f)
-
-                assert rotate_best_config is not None
-
-                # get edge list path
-                train_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/train.edgelist'
-                val_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/validation.edgelist'
-                test_edge_path = f'../CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/test.edgelist'
-                train_val_test_triples = (train_edge_path, val_edge_path, test_edge_path)
-
-                embeddings = do_retrain(
-                                    design=design,
-                                    out=kge_output,
-                                    best_config=rotate_best_config,
-                                    return_patients=True,
-                                    train_size=0.8, 
-                                    validation_size=0.1,
-                                    complex_embedding=False,
-                                    train_val_test_triples=train_val_test_triples)
-            
-            embeddings.to_csv(os.path.join(kge_output,'embedding.csv'))
-        
         # 4. do classification
         print("\n-------------Run Classification HPO---------------------------------------------")
         for model_name in args.cls_model:
             cls_output = os.path.join(kge_output, 'cls_result', model_name)
             os.makedirs(cls_output, exist_ok=True)
 
-            db_url = f"sqlite:///{os.path.join(overall_output, 'optuna_study.db')}"
+            db_url = f"sqlite:///{os.path.join(cls_output, 'optuna_study.db')}"
             
             print(f"\n--- Running Classification HPO with model {model_name}---")
             
@@ -278,7 +182,7 @@ def main():
                 model_name=model_name,
                 out_dir=cls_output,
                 validation_cv=5,
-                scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
+                scoring_metrics=['roc_auc','accuracy', 'f1', 'f1_micro', 'f1_macro'],
                 rand_labels=False,
                 mysql_url=db_url,
                 num_processes=args.n_jobs,

@@ -168,12 +168,12 @@ def train_epoch(model:TwoStageModel,
                                                     y=data['Patient'].y,
                                                     mask=mask,
                                                 )
-    loss = lambda_cls*cls_loss + link_loss + att_loss
+    loss = cls_loss + lambda_cls*link_loss + att_loss
 
     loss.backward()
     optimizer.step()
 
-    loss_result = {'Total_loss': float(loss),
+    loss_result = {'Total_loss': float(loss.detach()),
                     'LP_loss': float(link_loss),
                     'Cls_loss': float(cls_loss),
                     'Attention_loss': float(att_loss),
@@ -330,7 +330,7 @@ def run_inner_hpo(
         num_negatives = trial.suggest_categorical("num_negatives", [50, 100, 200, 500])
         pos_sample_cap = trial.suggest_categorical("pos_sample_cap", [50, 100, 200, 500])
 
-        inner_skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=args.seed)
+        inner_skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=args.seed)
         y_trainval = y_all[trainval_idx]
         eval_edge_index_dict = sample_edges(data.static_edge_index_dict, 0.1)
         inner_composites = []
@@ -555,7 +555,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
                 raise
 
         # --- Retrain on trainval, evaluate on test ---
-        print("Retraining with best params...")
+        print("\nRetraining with best params...")
         fold_metrics, history, attention_weights = retrain_and_evaluate(
             data=data,
             args=args,
