@@ -77,3 +77,7 @@ GateEmbeddingTask/TwoStageMLT/model_structure.md
 EdgeAssignmentTask/neighborhood_selection/ideas.md
 GateEmbeddingTask/TwoStageMLT/results_old/
 CLEP_repeat/leo_pipeline.sh
+CLEP_repeat/__pycache__/
+CLEP_repeat/embedding/__pycache__/
+CLEP_repeat/classification/__pycache__/
+data_processing/__pycache__/

@@ -19,13 +19,13 @@ def parser():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # graph generator args
-    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/retrain_oldPPIKG_cls", 
+    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/hpo_kge/AD_KG", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
     parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--design", type=str, default="../data/ADNI/design_with_real_target.tsv", 
+    parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
     parser.add_argument("--control", default=0, 
                         help="Control group label")
@@ -68,14 +68,26 @@ def main():
         os.makedirs(final_output, exist_ok=True)
     
     # repeat CLEP classification, load embeddings
-    for threshold in [1,1.5, 2.5, 5, 10, 20]:
+    for threshold in [1.5, 5]:
             
         final_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}', args.kge_model)
         os.makedirs(final_output, exist_ok=True)
+
+        design = pd.read_csv(args.design, index_col=0, sep='\t')
+        design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
+        # Create a mapping of the patient to the label. The patient id is converted to string to avoid duplicates
+        label_mapping = design['Target'].to_dict()
+
         
-        embedding_path = f"./CLEP_repeat/clep_resources/Datasets/ADNI/threshold/results/{threshold}/RotatE/embedding.tsv"
-        embeddings = pd.read_csv(embedding_path, sep='\t', index_col=0)
+        embedding_path = f"./CLEP_repeat/results/hpo_kge/AD_KG/{args.scoring_type}_{threshold}/{args.kge_model}/embedding.csv"
+        embeddings = pd.read_csv(embedding_path, index_col=0)
+
+        embeddings = embeddings[embeddings.index.isin(design.index)]
+
+        for index in embeddings.index:
+            embeddings.at[index, 'label'] = label_mapping[index]
         
+        assert 'label' in embeddings.columns 
    
         print("\n-------------Run Classification HPO---------------------------------------------")
         for model_name in args.cls_model:
