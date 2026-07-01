@@ -152,9 +152,9 @@ def main():
             inner_pipeline.pop("testing", None)
             inner_pipeline.pop("validation", None)
             
-        # REMOVE outdated model_kwargs
-        if "model_kwargs" in inner_pipeline:
-            inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
+            # REMOVE outdated model_kwargs
+            if "model_kwargs" in inner_pipeline:
+                inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
 
         embeddings = do_kge(edgelist=graph_df,
                             design=design,
