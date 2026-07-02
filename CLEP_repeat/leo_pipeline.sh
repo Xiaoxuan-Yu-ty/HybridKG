@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #SBATCH -n 1
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
+#SBATCH --output=leo_logs/train_%j.out
+#SBATCH --error=leo_logs/train_%j.err
 #SBATCH --gres gpu:a100:1
 #SBATCH -t 48:00:00
 #SBATCH -J CLEP
