@@ -55,9 +55,9 @@ def parser():
                                 'svm',
                                 'random_forest',
                                 'gradient_boost',])
-    parser.add_argument("--n_jobs", type=int, default=1,
+    parser.add_argument("--n_jobs", type=int, default=5,
                         help="Number of Optuna HPO parallel jobs")
-    parser.add_argument("--num_trials", type=int, default=100,
+    parser.add_argument("--num_trials", type=int, default=200,
                         help="Number of Optuna HPO trials")
     
     args = parser.parse_args()
@@ -79,7 +79,7 @@ def main():
         'all': do_average
     }
     # Execute
-    for threshold in [1.5, 5]:
+    for threshold in [1, 2.5, 10, 20]:
         
         overall_output = os.path.join(args.output_dir,args.DiseaseKG,f'{args.scoring_type}_{threshold}')
         kge_output = os.path.join(overall_output, args.kge_model)

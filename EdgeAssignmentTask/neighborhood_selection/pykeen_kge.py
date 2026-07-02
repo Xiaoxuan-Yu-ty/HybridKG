@@ -222,10 +222,10 @@ def parser():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # graph generator args
-    parser.add_argument("--DiseaseKG", type=str, default='AD_KG', choices=['PPI_KG','Prime_KG','AD_KG'])
+    parser.add_argument("--DiseaseKG", type=str, nargs="+",default=['PPI_KG','Prime_KG','AD_KG'])
     parser.add_argument("--kg_disease", type=str, default="./datasets/base_kgs/ad_kg_with_reverse_edges.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
-    parser.add_argument("--kg_healthy", type=str, default="./data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
+    parser.add_argument("--kg_healthy", type=str, default="./datasets/base_kgs/healthy_kg_with_reverse_edges.pkl", 
                         help="Path to Healthy Knowledge Graph (.pkl).")
     parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge", 
                         help="Directory to save generated networks.")
@@ -238,51 +238,63 @@ def parser():
 
 def main():
     args = parser()
-    final_output = os.path.join(args.output_dir, args.DiseaseKG)
-    os.makedirs(final_output, exist_ok=True)
-
-    # 1. load KGs
-    kg_disease = load_graph(args.kg_disease)
-    kg_healthy = load_graph(args.kg_healthy)
-    kg = nx.compose(kg_disease, kg_healthy)
-    save_kg_path = os.path.join(final_output,f"G_merge_{args.DiseaseKG}_healthy.pkl")
-    save_graph(kg, save_path=save_kg_path)
-
-    # 2. convert networkx graph to edgelist
-    graph_df = nx.to_pandas_edgelist(kg)
-    graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
-    graph_df=graph_df[['source','relation','target']]
-    save_edgelist_path = os.path.join(final_output,f"Edgelist_merge_{args.DiseaseKG}_healthy.csv")
-    graph_df.to_csv(save_edgelist_path)
     
-    # 3. KGE: HPO + Retrain 
-    print("\n-------------Do KGE---------------------------------------------")
-    hpo_config_path = f"./PyKeen/configs/{args.kge_model}_model_config.json"
-    with open(hpo_config_path, 'r') as f:
-        hpo_config_dict = json.load(f)
-
-    assert hpo_config_dict is not None
-
-    # Remove ALL structural keys causing duplicates or path errors
-    if "pipeline" in hpo_config_dict:
-        inner_pipeline = hpo_config_dict["pipeline"]
-        inner_pipeline.pop("dataset", None)
-        inner_pipeline.pop("training", None)
-        inner_pipeline.pop("testing", None)
-        inner_pipeline.pop("validation", None)
+    for DiseaseKG in ['AD_KG', 'Prime_KG','PPI_KG']:
+        if DiseaseKG == 'AD_KG':
+            kg_disease_path = "./datasets/base_kgs/ad_kg_with_reverse_edges.pkl"
+        elif DiseaseKG == 'Prime_KG':
+            kg_disease_path = "./datasets/base_kgs/prime_kg_with_reverse_edges.pkl"
+        elif DiseaseKG == 'PPI_KG':
+            kg_disease_path = "./datasets/base_kgs/ppi_old_with_reverse_edges.pkl"
+        else:
+            print("Invalid DiseaseKG name")
+            continue
         
-        # REMOVE outdated model_kwargs
-        if "model_kwargs" in inner_pipeline:
-            inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
+        final_output = os.path.join(args.output_dir, DiseaseKG)
+        os.makedirs(final_output, exist_ok=True)
 
-    embeddings = do_kge(edgelist=graph_df,
-                        out=final_output,
-                        model_config=hpo_config_dict,
-                        return_patients=True,
-                        train_size=0.8, validation_size=0.1,
-                        complex_embedding=False)
-    
-    embeddings.to_csv(os.path.join(final_output,'embedding.csv')) 
+        # 1. load KGs
+        kg_disease = load_graph(kg_disease_path)
+        kg_healthy = load_graph(args.kg_healthy)
+        kg = nx.compose(kg_disease, kg_healthy)
+        save_kg_path = os.path.join(final_output,f"G_merge_{DiseaseKG}_healthy.pkl")
+        save_graph(kg, save_path=save_kg_path)
+
+        # 2. convert networkx graph to edgelist
+        graph_df = nx.to_pandas_edgelist(kg)
+        graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
+        graph_df=graph_df[['source','relation','target']]
+        save_edgelist_path = os.path.join(final_output,f"Edgelist_merge_{args.DiseaseKG}_healthy.csv")
+        graph_df.to_csv(save_edgelist_path)
+        
+        # 3. KGE: HPO + Retrain 
+        print("\n-------------Do KGE---------------------------------------------")
+        hpo_config_path = f"./PyKeen/configs/{args.kge_model}_model_config.json"
+        with open(hpo_config_path, 'r') as f:
+            hpo_config_dict = json.load(f)
+
+        assert hpo_config_dict is not None
+
+        # Remove ALL structural keys causing duplicates or path errors
+        if "pipeline" in hpo_config_dict:
+            inner_pipeline = hpo_config_dict["pipeline"]
+            inner_pipeline.pop("dataset", None)
+            inner_pipeline.pop("training", None)
+            inner_pipeline.pop("testing", None)
+            inner_pipeline.pop("validation", None)
+            
+            # REMOVE outdated model_kwargs
+            if "model_kwargs" in inner_pipeline:
+                inner_pipeline["model_kwargs"].pop("automatic_memory_optimization", None)
+
+        embeddings = do_kge(edgelist=graph_df,
+                            out=final_output,
+                            model_config=hpo_config_dict,
+                            return_patients=False,
+                            train_size=0.8, validation_size=0.1,
+                            complex_embedding=False)
+        
+        embeddings.to_csv(os.path.join(final_output,'embedding.csv')) 
 
 if __name__=="__main__":
     main()
