@@ -81,3 +81,4 @@ CLEP_repeat/__pycache__/
 CLEP_repeat/embedding/__pycache__/
 CLEP_repeat/classification/__pycache__/
 data_processing/__pycache__/
+Neo4j_KG_Containers/ad_adni_neo4j/import
