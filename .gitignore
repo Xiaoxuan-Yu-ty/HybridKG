@@ -77,3 +77,4 @@ GateEmbeddingTask/TwoStageMLT/model_structure.md
 EdgeAssignmentTask/neighborhood_selection/ideas.md
 GateEmbeddingTask/TwoStageMLT/results_old/
 CLEP_repeat/leo_pipeline.sh
+CLEP_repeat/leo_logs/
