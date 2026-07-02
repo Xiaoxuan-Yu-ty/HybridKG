@@ -1,0 +1,21 @@
+services:
+  neo4j:
+    image: quay.io/lib/neo4j:community-bullseye
+    container_name: ad_adni
+
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+
+    environment:
+      NEO4J_AUTH: neo4j/test1234
+      NEO4J_dbms_security_allow__csv__import__from__file__urls: "true"
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_allowlist: "apoc.*"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+
+    volumes:
+      - ./data:/data
+      - ./import:/var/lib/neo4j/import
