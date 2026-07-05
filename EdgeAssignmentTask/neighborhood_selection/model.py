@@ -15,7 +15,7 @@ from GateEmbeddingTask.encoders import get_encoder, HRGATLayer
 # maybe useful later
 
 class AttentionAggregator(nn.Module):
-    def __init__(self, data, protein_dim, 
+    def __init__(self, data, 
                  hidden_channels, att_channels, out_channels, 
                  num_classes,
                  dropout_rate, negative_slope=0.2):
@@ -25,7 +25,7 @@ class AttentionAggregator(nn.Module):
 
         # Project both inputs to same hidden space
         self.proj_gene = nn.Linear(data['Patient'].x.size(-1), hidden_channels)
-        self.proj_protein = nn.Linear(protein_dim, hidden_channels)
+        self.proj_protein = nn.Linear(data['Protein'].x.size(-1), hidden_channels)
 
         self.patient_aggregator = HRGATLayer(
                 metadata=(data.node_types, data.edge_types),

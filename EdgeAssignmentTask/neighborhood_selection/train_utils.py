@@ -1,7 +1,9 @@
 import pickle
+import random
 import re
 from collections import defaultdict
 import networkx as nx
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -9,7 +11,24 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.data import HeteroData
 from tqdm import tqdm
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
+def get_device():
+    """
+    Get the best available device (CUDA, or CPU).
+    
+    Returns:
+        torch.device: Device object
+    """
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    else:
+        return torch.device('cpu')
+    
 def load_graph(filepath)->nx.MultiDiGraph:
     with open(filepath, 'rb') as f:
         G = pickle.load(f)
@@ -275,3 +294,65 @@ class PatientProteinNetworkGenerator():
                 summary_df.at[patient,linked_nodes_col].append(protein_node) # type: ignore
         
         return G, summary_df
+
+
+def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
+    """
+    Converts the Patient-Protein network into a PyTorch Geometric HeteroData object.
+    .
+    """
+    print("Starting conversion from NetworkX to HeteroData...")
+    data = HeteroData()
+    node_mappings = {} # {node_type: {node_name: integer_index}}
+    
+    # 1. Categorize Nodes and Map Indices
+    for node, attrs in G.nodes(data=True):
+        n_type = attrs.get('type') or attrs.get('label')
+        
+        if n_type not in node_mappings:
+            node_mappings[n_type] = {}
+        
+        if node not in node_mappings[n_type]:
+            node_mappings[n_type][node] = len(node_mappings[n_type])
+   
+    # 2. Process ALL Node Types (Initialize x)
+    for n_type, mapping in node_mappings.items():
+
+        num_nodes = len(mapping)
+        data[n_type].num_nodes = num_nodes
+
+        # Initialize x-feature for all node types (Patient & Protein)
+        n_ids = sorted(mapping, key=mapping.get)
+        x = torch.tensor([G.nodes[nid]['x'] for nid in n_ids], dtype=torch.float)
+        data[n_type].x = x
+        data[n_type].y = torch.tensor([G.nodes[nid]['y'] for nid in n_ids], dtype=torch.long)
+        
+    # 4. Process Edges with separation
+    edges_dict = {}
+    for u, v, r, attrs in G.edges(keys=True, data=True):
+        u_type = G.nodes[u].get('type') or G.nodes[u].get('label')
+        v_type = G.nodes[v].get('type') or G.nodes[v].get('label')
+        if not isinstance(r, str):
+            rel = attrs.get('relation') or attrs.get('rel') or attrs.get('type')
+        else:
+            rel = r
+        
+        # Replace double underscores with single ones to satisfy PyG requirements
+        safe_rel = str(rel).replace('__', '_')
+        
+        edge_type = (u_type, safe_rel, v_type)
+            
+        if edge_type not in edges_dict:
+            edges_dict[edge_type] = []
+        
+        u_idx = node_mappings[u_type][u]
+        v_idx = node_mappings[v_type][v]
+        edges_dict[edge_type].append([u_idx, v_idx])
+
+    # Finalize Edges in HeteroData
+    for etype, content in edges_dict.items():
+        data[etype].edge_index = torch.tensor(content, dtype=torch.long).t().contiguous()
+    
+    print(f"HeteroData created: {len(data.node_types)} node types, {len(data.edge_types)} edge types.")
+    
+    return data, node_mappings 

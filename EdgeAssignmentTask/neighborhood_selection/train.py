@@ -137,7 +137,7 @@ def train(
     best_composite = 0.0
     best_state = None
     history = {}
-    for epoch in tqdm(range(epochs), desc="Phase 2: Aggregator Training"):
+    for epoch in tqdm(range(epochs), desc="Aggregator Training"):
         model.train()
         optimizer.zero_grad()
 
@@ -167,7 +167,7 @@ def train(
         val_metrics, _ = evaluate_cls(
             model=model, 
             data=data, 
-            mask_name='val_mask')
+            mask_name=val_mask_name)
         
         score = val_metrics[metric]
 
@@ -267,7 +267,6 @@ def run_inner_hpo(
         data['Patient'].val_mask[val_abs] = True
 
         model = AttentionAggregator(data=data,
-                                  protein_dim=data['Protein'].x.shape(1),
                                   hidden_channels=hidden_channels,
                                   att_channels=att_channels,
                                   out_channels=out_channels,
@@ -356,7 +355,6 @@ def retrain_and_evaluate(
     data['Patient'].test_mask[test_idx] = True
 
     model = AttentionAggregator(data=data,
-                                  protein_dim=data['Protein'].x.shape(1),
                                   hidden_channels=best_params['hidden_channels'],
                                   att_channels=best_params['att_channels'],
                                   out_channels=best_params['out_channels'],
