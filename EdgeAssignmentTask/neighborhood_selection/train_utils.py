@@ -357,3 +357,79 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
     print(f"HeteroData created: {len(data.node_types)} node types, {len(data.edge_types)} edge types.")
     
     return data, node_mappings 
+
+import numpy as np
+
+def compute_topological_features(G, label_homophily=False):
+    """
+    Compute topological features for patient nodes in the graph.
+    
+    Args:
+        G: NetworkX graph object
+        
+    Returns:
+        dict: Dictionary containing topological features for each node
+    """
+    print("Computing topological features...")
+    
+    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')=='Patient']
+    degrees = np.array([G.degree(n) for n in nodes])
+
+    avg_neighbor_degrees = nx.average_neighbor_degree(G)
+    mean_neighbor_degrees = np.array([avg_neighbor_degrees[n] for n in nodes])
+    
+    labels = [G.nodes[node].get('y') for node in nodes]
+    
+    # Centrality measures
+    degree_centrality = np.array(list(nx.degree_centrality(G).values()))
+    
+    # Average edge weight
+    avg_edge_weight = []
+    for n in nodes:
+        if G.degree(n) > 0:
+            neibor_weights = []
+            for m in G.neighbors(n):
+                edge_data_dict = G[n][m] 
+                # edge_data_dict looks like: {0: {'weight': 0.1, ...}, 1: {'weight': 0.5, ...}}
+                for edge_key, attributes in edge_data_dict.items():
+                    weight = attributes.get('weight', 0)
+                    neibor_weights.append(weight)
+                    #print(weight)
+            avg_edge_weight.append(np.mean(neibor_weights))
+        else:
+            avg_edge_weight.append(0.0)
+    avg_edge_weight = np.array(avg_edge_weight)
+    
+    features = {
+            'degrees': degrees,
+            'avg_neighborhood_degrees':avg_neighbor_degrees,
+            'degree_centrality': degree_centrality,
+            'avg_edge_weight': avg_edge_weight
+        }
+
+    # Two-hop agreement
+    if label_homophily:
+        two_hop_agreement = []
+        for n in tqdm(nodes, desc="Computing two-hop agreement"):
+            d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
+            d22 = list(d2)
+            for neighbor in d2:
+                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient':
+                    d22.remove(neighbor)
+            # print(d22)
+            if d22:
+                lbls = [G.nodes[m]['y'] for m in d22]
+                two_hop_agreement.append(lbls.count(G.nodes[n]['y']) / len(lbls))
+            else:
+                two_hop_agreement.append(0.0)
+        two_hop_agreement = np.array(two_hop_agreement)
+
+        features = {
+            'degrees': degrees,
+            'avg_neighborhood_degrees':avg_neighbor_degrees,
+            'two_hop_agreement': two_hop_agreement,
+            'degree_centrality': degree_centrality,
+            'avg_edge_weight': avg_edge_weight
+        }
+    
+        return features

@@ -112,11 +112,8 @@ def train(
     metric:str = 'AUROC',
     val_mask_name: str = 'val_mask',
     attention_loss=False,
+    randomize=True,
 ):
-
-    # prepare patient_x and protein_embeddings
-    patient_x = data['Patient'].x
-    protein_embeddings = data['Protein'].x
 
     best_composite = 0.0
     best_state = None
@@ -127,10 +124,16 @@ def train(
 
         mask = data['Patient'].train_mask
 
-        h_out, attention_weights = model(
-            x_dict=data.x_dict,
+        if randomize:
+            h_out, attention_weights = model(
+            x_dict=None,
             edge_index_dict=data.edge_index_dict
         )
+        else:
+            h_out, attention_weights = model(
+                x_dict=data.x_dict,
+                edge_index_dict=data.edge_index_dict
+            )
         h_patient=model.classify(h_out)
 
         cls_loss = F.cross_entropy(h_patient[mask], data['Patient'].y[mask])
@@ -176,12 +179,19 @@ def train(
     return model, history, best_composite
 
 @torch.no_grad()
-def evaluate_cls(model, data, mask_name):
+def evaluate_cls(model, data, mask_name, randomize=True):
     model.eval()
-    h_out, attention_weights = model(
+    if randomize:
+            h_out, attention_weights = model(
+            x_dict=None,
+            edge_index_dict=data.edge_index_dict
+        )
+    else:
+        h_out, attention_weights = model(
             x_dict=data.x_dict,
             edge_index_dict=data.edge_index_dict
         )
+   
     h_patient=model.classify(h_out)
     
     mask = data['Patient'][mask_name] 
@@ -218,7 +228,8 @@ def run_inner_hpo(
     num_patients,
     num_classes,
     outer_fold,
-    attention_loss=False
+    attention_loss=False,
+    randomize=True,
 ):
     """
     Inner HPO: single train/val split over trainval_idx only.
@@ -270,10 +281,11 @@ def run_inner_hpo(
                     epochs=args.epochs,
                     device=device,
                     val_mask_name='val_mask',
-                    attention_loss=attention_loss
+                    attention_loss=attention_loss,
+                    randomize=randomize,
                 )
 
-            val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
+            val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask', randomize=randomize)
             
             # Report for pruning — single step since no inner folds
             trial.report(best_composite, step=0)
@@ -321,6 +333,7 @@ def retrain_and_evaluate(
     num_classes,
     best_params,
     attention_loss=False,
+    randomize=True,
 ):
     """
     Retrains on full trainval split using best_params,
@@ -367,11 +380,12 @@ def retrain_and_evaluate(
                     epochs=args.epochs,
                     device=device,
                     val_mask_name='val_mask',
-                    attention_loss=attention_loss
+                    attention_loss=attention_loss, 
+                    randomize=randomize,
                 )
 
         # Evaluate on locked test set
-        fold_metrics, attention_weights = evaluate_cls(trained_model, data, 'test_mask')
+        fold_metrics, attention_weights = evaluate_cls(trained_model, data, 'test_mask', randomize=randomize)
         return fold_metrics, history, attention_weights
 
     finally:
@@ -382,7 +396,12 @@ def retrain_and_evaluate(
         torch.cuda.empty_cache()
 
 
-def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_hpo=True, attention_loss=False,):
+def nested_cross_validate(data, args, device, 
+                          db_url=None, 
+                          best_params=None, 
+                          do_hpo=True, 
+                          attention_loss=False,
+                          randomize=False):
     """
     Outer loop: 5-fold CV for unbiased test evaluation.
     Inner loop: 3-fold HPO CV, never sees outer test fold.
@@ -418,7 +437,8 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
                     num_patients=num_patients,
                     num_classes=num_classes,
                     outer_fold=outer_fold,
-                    attention_loss=attention_loss
+                    attention_loss=attention_loss,
+                    randomize=randomize
                 )
             except Exception as e:
                 print(f"Fold {outer_fold} HPO failed: {e}")
@@ -436,7 +456,8 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
             num_patients=num_patients,
             num_classes=num_classes,
             best_params=fold_best_params,
-            attention_loss=attention_loss
+            attention_loss=attention_loss,
+            randomize=randomize,
         )
 
         final_results[f"fold_{outer_fold}"] = {

@@ -22,6 +22,9 @@ class AttentionAggregator(nn.Module):
         super().__init__()
         self.dropout_rate = dropout_rate
         self.data = data
+        self.embeddings = nn.ModuleDict({
+            ntype:torch.nn.Embedding(data[ntype].num_nodes, hidden_channels) for ntype in data.node_types
+        })
 
         # Project both inputs to same hidden space
         self.proj_gene = nn.Linear(data['Patient'].x.size(-1), hidden_channels)
@@ -39,10 +42,15 @@ class AttentionAggregator(nn.Module):
         self.gate = nn.Linear(2*hidden_channels,1)   # matches combined dim
         self.classifier = nn.Linear(hidden_channels,num_classes)
     
-    def forward(self, x_dict, edge_index_dict):
-       
+    def forward(self, edge_index_dict, x_dict=None):
+
+        if x_dict is None:
+            x_dict = {
+                node_type:embedding.weight for node_type, embedding in self.embeddings.items()
+            }
+
         patient_x, protein_embeddings = x_dict['Patient'], x_dict['Protein']
-        
+
         # Force inputs to that same device
         device = next(self.parameters()).device
         patient_x = patient_x.to(device)

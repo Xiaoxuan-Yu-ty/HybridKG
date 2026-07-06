@@ -158,7 +158,8 @@ def main():
             device=device,
             do_hpo=True,
             db_url=f"sqlite:///{final_output}/optuna.db",
-            attention_loss=True
+            attention_loss=True,
+            randomize=False,
             )
     
         else:
@@ -187,7 +188,8 @@ def main():
             db_url=None,
             do_hpo=False,
             best_params=hyperparameters,
-            attention_loss=True
+            attention_loss=True,
+            randomize=False
             )
             
         # Calculate Average Final Metrics
