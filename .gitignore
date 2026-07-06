@@ -84,3 +84,17 @@ data_processing/__pycache__/
 Neo4j_KG_Containers/ad_adni_neo4j/import
 CLEP_repeat/leo_logs/
 EdgeAssignmentTask/neighborhood_selection/ideas.md
+EdgeAssignmentTask/neighborhood_selection/__pycache__/
+EdgeAssignmentTask/__pycache__/
+CLEP_repeat/classification/__pycache__/
+CLEP_repeat/clep_resources
+GateEmbeddingTask/__pycache__/__init__.cpython-311.pyc
+CLEP_repeat/classification/__pycache__/__init__.cpython-311.pyc
+CLEP_repeat/classification/__pycache__/hpo.cpython-311.pyc
+CLEP_repeat/classification/__pycache__/utils.cpython-311.pyc
+data_processing/__pycache__/
+GateEmbeddingTask/__pycache__/__init__.cpython-311.pyc
+GateEmbeddingTask/__pycache__/encoders.cpython-311.pyc
+GateEmbeddingTask/__pycache__/HRGATConv.cpython-311.pyc
+GateEmbeddingTask/__pycache__/HRGCNConv.cpython-311.pyc
+GateEmbeddingTask/__pycache__/

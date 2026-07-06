@@ -95,7 +95,7 @@ def networkx_to_heterodata(G):
     return data, node_mappings
 
 # Feature construction
-def build_data_dict(data):
+def build_data_dict(data,device):
     """
     Construct x_dict:
     - Patient: use real features
@@ -106,15 +106,16 @@ def build_data_dict(data):
     # get feature dim from Patient
     for node_type in data.node_types:
         try:
-            x_dict[node_type] = data[node_type]['x']
+            x_dict[node_type] = data[node_type]['x'].to(device)
         except KeyError:
             x_dict[node_type]=None
         
     data.x_dict = x_dict
     data.num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}
-    data.edge_index_dict = {etype:data[etype].edge_index for etype in data.edge_types}
     
-    return data
+    data.edge_index_dict = {etype:data[etype].edge_index.to(device) for etype in data.edge_types}
+
+    return data.to(device)
 
 def get_protein_embeddings(graph_path, embeddings_path):
     

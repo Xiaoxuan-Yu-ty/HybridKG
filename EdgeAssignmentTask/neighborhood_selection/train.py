@@ -101,24 +101,7 @@ def serialize_attention_weight(attention_weights):
 
     
     return serializable_att
-    
 
-def compute_scheduled_value(epoch, total_epochs, start_val, end_val, schedule_type='linear'):
-    """
-    Computes scheduled value for a hyperparameter based on current epoch.
-    Supports constant, linear decay/warmup, and cosine annealing.
-    """
-    if total_epochs <= 1 or schedule_type == 'constant':
-        return start_val
-        
-    if schedule_type == 'linear':
-        return start_val + (end_val - start_val) * (epoch / (total_epochs - 1))
-        
-    elif schedule_type == 'cosine':
-        cos_inner = math.pi * (epoch / (total_epochs - 1))
-        return end_val + 0.5 * (start_val - end_val) * (1.0 + math.cos(cos_inner))
-        
-    return start_val
 
 def train(
     model,
@@ -128,6 +111,7 @@ def train(
     device,
     metric:str = 'AUROC',
     val_mask_name: str = 'val_mask',
+    attention_loss=False,
 ):
 
     # prepare patient_x and protein_embeddings
@@ -144,20 +128,21 @@ def train(
         mask = data['Patient'].train_mask
 
         h_out, attention_weights = model(
-            patient_x=patient_x,
-            protein_embeddings=protein_embeddings,
+            x_dict=data.x_dict,
             edge_index_dict=data.edge_index_dict
         )
-        h_patient=model.classify(h_out['Patient'])
+        h_patient=model.classify(h_out)
 
         cls_loss = F.cross_entropy(h_patient[mask], data['Patient'].y[mask])
 
-        att_loss = hierarchical_attention_loss(
-            attentions=attention_weights,
-            y=data['Patient'].y,
-            mask=mask,
-            device=device
-        )
+        att_loss = torch.tensor(0.0, device=device)
+        if attention_loss:
+            att_loss = hierarchical_attention_loss(
+                attentions=attention_weights,
+                y=data['Patient'].y,
+                mask=mask,
+                device=device
+            )
 
         loss = cls_loss + att_loss
         loss.backward()
@@ -194,11 +179,10 @@ def train(
 def evaluate_cls(model, data, mask_name):
     model.eval()
     h_out, attention_weights = model(
-            patient_x=data['Patient'].x,
-            protein_embeddings=data['Protein'].x,
+            x_dict=data.x_dict,
             edge_index_dict=data.edge_index_dict
         )
-    h_patient=model.classify(h_out['Patient'])
+    h_patient=model.classify(h_out)
     
     mask = data['Patient'][mask_name] 
     y_true = data['Patient'].y[mask].cpu().numpy()
@@ -234,6 +218,7 @@ def run_inner_hpo(
     num_patients,
     num_classes,
     outer_fold,
+    attention_loss=False
 ):
     """
     Inner HPO: single train/val split over trainval_idx only.
@@ -273,6 +258,7 @@ def run_inner_hpo(
                                   num_classes=num_classes,
                                   dropout_rate=dropout_rate
                                   )
+        model.to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     
         trained_model = None
@@ -284,6 +270,7 @@ def run_inner_hpo(
                     epochs=args.epochs,
                     device=device,
                     val_mask_name='val_mask',
+                    attention_loss=attention_loss
                 )
 
             val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask')
@@ -316,7 +303,10 @@ def run_inner_hpo(
         study_name=f"inner_hpo_outer_fold_{outer_fold}",
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5),
     )
-    study.optimize(inner_objective, n_trials=args.num_trial, n_jobs=1, show_progress_bar=True)
+    study.optimize(inner_objective, 
+                   n_trials=args.num_trial, 
+                   n_jobs=args.n_jobs,
+                   show_progress_bar=True)
     print(f"  Best inner params: {study.best_params}")
     return study.best_params
 
@@ -330,6 +320,7 @@ def retrain_and_evaluate(
     num_patients,
     num_classes,
     best_params,
+    attention_loss=False,
 ):
     """
     Retrains on full trainval split using best_params,
@@ -361,6 +352,7 @@ def retrain_and_evaluate(
                                   num_classes=num_classes,
                                   dropout_rate=best_params['dropout_rate']
                                   )
+    model.to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=best_params['lr'],
@@ -375,6 +367,7 @@ def retrain_and_evaluate(
                     epochs=args.epochs,
                     device=device,
                     val_mask_name='val_mask',
+                    attention_loss=attention_loss
                 )
 
         # Evaluate on locked test set
@@ -389,7 +382,7 @@ def retrain_and_evaluate(
         torch.cuda.empty_cache()
 
 
-def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_hpo=True, ):
+def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_hpo=True, attention_loss=False,):
     """
     Outer loop: 5-fold CV for unbiased test evaluation.
     Inner loop: 3-fold HPO CV, never sees outer test fold.
@@ -425,6 +418,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
                     num_patients=num_patients,
                     num_classes=num_classes,
                     outer_fold=outer_fold,
+                    attention_loss=attention_loss
                 )
             except Exception as e:
                 print(f"Fold {outer_fold} HPO failed: {e}")
@@ -442,6 +436,7 @@ def nested_cross_validate(data, args, device, db_url=None, best_params=None, do_
             num_patients=num_patients,
             num_classes=num_classes,
             best_params=fold_best_params,
+            attention_loss=attention_loss
         )
 
         final_results[f"fold_{outer_fold}"] = {

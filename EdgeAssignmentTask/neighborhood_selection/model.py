@@ -27,25 +27,35 @@ class AttentionAggregator(nn.Module):
         self.proj_gene = nn.Linear(data['Patient'].x.size(-1), hidden_channels)
         self.proj_protein = nn.Linear(data['Protein'].x.size(-1), hidden_channels)
 
-        self.patient_aggregator = HRGATLayer(
+        self.aggregator = HRGATLayer(
                 metadata=(data.node_types, data.edge_types),
                 in_dim=hidden_channels,
-                out_dim=out_channels,
+                out_dim=hidden_channels,
                 att_dim=att_channels,
                 dropout=dropout_rate,
                 negative_slope=negative_slope,
             ) 
         
-        self.gate = nn.Linear(2 * out_channels, 1)       # matches combined dim
-        self.classifier = nn.Linear(out_channels, num_classes)
+        self.gate = nn.Linear(2*hidden_channels,1)   # matches combined dim
+        self.classifier = nn.Linear(hidden_channels,num_classes)
     
-    def forward(self, patient_x, protein_embeddings, edge_index_dict):
+    def forward(self, x_dict, edge_index_dict):
+       
+        patient_x, protein_embeddings = x_dict['Patient'], x_dict['Protein']
         
+        # Force inputs to that same device
+        device = next(self.parameters()).device
+        patient_x = patient_x.to(device)
+        protein_embeddings = protein_embeddings.to(device)
+        
+        # Ensure all edge indices are on the same device
+        edge_index_dict = {k: v.to(device) for k, v in edge_index_dict.items()}
+
         h_gene    = F.elu(self.proj_gene(patient_x))
         h_protein = F.elu(self.proj_protein(protein_embeddings))
 
-        x_dict = {'Patient': h_gene, 'Protein': h_protein}
-        h_out, att_dict = self.aggregator(x_dict, edge_index_dict)
+        new_x_dict = {'Patient': h_gene, 'Protein': h_protein}
+        h_out, att_dict = self.aggregator(new_x_dict, edge_index_dict)
         
         combined = torch.cat([h_gene, h_out['Patient']], dim=-1)
         gate = torch.sigmoid(self.gate(combined))
