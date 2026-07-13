@@ -4,6 +4,7 @@ import json
 import os
 import pickle
 import pandas as pd
+import torch
 
 from EdgeAssignmentTask.neighborhood_selection.train import (nested_cross_validate,
                                                              retrain_and_evaluate)
@@ -46,6 +47,8 @@ def parse():
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     
     # Model parameters
+    parser.add_argument("--aggregator", type=str, choices=['attention', 'fuzzy_attention'],
+                        help="Model Name of PatientAggregator")
     parser.add_argument("--hpo", action="store_true", help="Enable HPO Process")
     parser.add_argument("--hidden_channels", type=int, default=256)
     parser.add_argument("--out_channels", type=int, default=128)
@@ -152,10 +155,11 @@ def main():
         data = build_data_dict(data, device=device)
 
         if args.hpo:
-            final_results, attention_archive = nested_cross_validate(
+            final_results, attention_archive, fuzzy_params = nested_cross_validate(
             data=data,
             args=args,
             device=device,
+            aggregator=args.aggregator,
             do_hpo=True,
             db_url=f"sqlite:///{final_output}/optuna.db",
             attention_loss=True,
@@ -181,10 +185,11 @@ def main():
                 "weight_decay":args.weight_decay
             }
             
-            final_results, attention_archive = nested_cross_validate(
+            final_results, attention_archive, fuzzy_params = nested_cross_validate(
             data=data,
             args=args,
             device=device,
+            aggregator=args.aggregator,
             db_url=None,
             do_hpo=False,
             best_params=hyperparameters,
@@ -211,6 +216,11 @@ def main():
             with open(attention_path, "wb") as f:
                 pickle.dump(attention_archive, f)
             print(f"Attention weights saved to {attention_path}")
+        
+        if fuzzy_params:
+            fuzzy_path = os.path.join(final_output, "fuzzy_params.pt")
+            torch.save(fuzzy_params, fuzzy_path)
+
 
 if __name__ == "__main__":
     main() 

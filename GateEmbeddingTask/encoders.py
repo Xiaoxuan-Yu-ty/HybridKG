@@ -85,6 +85,16 @@ class HRGATEncoder(BaseHeteroEncoder):
                 negative_slope=negative_slope,
             ) for i in range(num_layers)
         ])
+        # layer normalization
+        self.norms = nn.ModuleList([
+                                        nn.ModuleDict({
+                                            node_type: nn.LayerNorm(
+                                                hidden_channels if i < num_layers - 1 else out_channels
+                                            )
+                                            for node_type in data.node_types
+                                        })
+                                        for i in range(num_layers)
+                                    ])
 
         # Residual projection for last layer if dims differ
         self.residual_proj = None
@@ -104,25 +114,40 @@ class HRGATEncoder(BaseHeteroEncoder):
             
             layer_x_dict = {}
             for nt, h in out_dict.items():
-                h = F.dropout(F.elu(h), p=self.dropout_rate, training=self.training)
-                
                 prev = x_dict.get(nt)
+
+                # ----- Residual -----
                 if prev is None:
-                    layer_x_dict[nt] = h
-                
+                    h_res = h
+
                 elif h.size(-1) == prev.size(-1):
-                    # Same dim — standard residual ✓
-                    layer_x_dict[nt] = h + prev
-                
+                    h_res = h + prev
+
                 elif is_last_layer and self.residual_proj is not None:
-                    # Last layer dim change — projected residual
-                    layer_x_dict[nt] = h + self.residual_proj[nt](prev)
-                
+                    h_res = h + self.residual_proj[nt](prev)
+
                 else:
-                    # Intermediate dim change — no residual
-                    # (shouldn't happen with current layer config)
-                    layer_x_dict[nt] = h
-            
+                    h_res = h
+
+                # ----- LayerNorm -----
+                layer_norms = self.norms[i]
+                if isinstance(layer_norms, nn.ModuleDict):
+                    h_norm = layer_norms[nt](h_res)
+                else:
+                    raise RuntimeError("Expected ModuleDict in self.norms")
+
+                # ----- Activation (nonlinearity) -----
+                h_act = F.elu(h_norm)
+
+                # ----- Dropout -----
+                h_out = F.dropout(
+                    h_act,
+                    p=self.dropout_rate,
+                    training=self.training,
+                )
+
+                layer_x_dict[nt] = h_out
+                            
             attention_weights.append(att_dict)
             x_dict = layer_x_dict
         

@@ -43,7 +43,7 @@ class GaussianRuleLayer(nn.Module):
     """
     
     def __init__(self, num_features, num_rules):
-        super(FuzzyRuleLayer, self).__init__()
+        super().__init__()
         self.num_rules = num_rules
         self.num_features = num_features
         
@@ -82,11 +82,12 @@ class GaussianRuleLayer(nn.Module):
 
 class FuzzyAggregator(nn.Module):
     def __init__(self, data, 
-                 hidden_channels, att_channels, out_channels, 
+                 hidden_channels, att_channels,
                  num_classes,
                  dropout_rate, negative_slope=0.2,
                  num_rules = 3):
         super().__init__()
+
         self.dropout_rate = dropout_rate
         self.data = data
         self.embeddings = nn.ModuleDict({
@@ -96,6 +97,8 @@ class FuzzyAggregator(nn.Module):
         # Project both inputs to same hidden space
         self.proj_gene = nn.Linear(data['Patient'].x.size(-1), hidden_channels)
         self.proj_protein = nn.Linear(data['Protein'].x.size(-1), hidden_channels)
+        self.input_norm = nn.LayerNorm(hidden_channels)
+        self.output_norm = nn.LayerNorm(hidden_channels)
 
         self.aggregator = HRGATLayer(
                 metadata=(data.node_types, data.edge_types),
@@ -132,26 +135,31 @@ class FuzzyAggregator(nn.Module):
         # Ensure all edge indices are on the same device
         edge_index_dict = {k: v.to(device) for k, v in edge_index_dict.items()}
 
-        h_gene    = F.elu(self.proj_gene(patient_x))
-        h_protein = F.elu(self.proj_protein(protein_embeddings))
-
+        # normalize input
+        h_gene = self.input_norm(self.proj_gene(patient_x))
+        h_protein = self.proj_protein(protein_embeddings)
+        
+        # encoder handles the nonlinearity consistency 
         new_x_dict = {'Patient': h_gene, 'Protein': h_protein}
         h_out, att_dict = self.aggregator(new_x_dict, edge_index_dict)
         
-        combined = torch.cat([h_gene, h_out['Patient']], dim=-1)
+        h_patient = self.output_norm(h_out['Patient'])
+        combined = torch.cat([h_gene, h_patient], dim=-1)
         gate = torch.sigmoid(self.gate(combined))
         
-        h_fused = gate * h_gene + (1 - gate) * h_out['Patient']
+        h_fused = (gate * h_gene + (1 - gate) * h_patient)
 
         # ------- concatenate with topological features ------------------
+        embedding = h_fused
+        r=None
         if topo_features is not None:
             r = self.fuzzy_layer(topo_features)
             e = self.rule_proj(r) # project topo features to hidden space
             g = torch.sigmoid(self.rule_gate(torch.cat([h_fused, e], dim=1)))
-            h_prime = g*h_fused + (1-g)*e
+            embedding = g*h_fused + (1-g)*e
 
-        return h_fused, h_prime, att_dict
+        return embedding, att_dict, r 
     
-    def classify(self, h_patient):
-        return self.classifier(h_patient)
+    def classify(self, embedding):
+        return self.classifier(embedding)
        
