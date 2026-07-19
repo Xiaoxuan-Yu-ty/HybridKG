@@ -36,6 +36,56 @@ from GateEmbeddingTask.train_utils import (
 from EdgeAssignmentTask.neighborhood_selection.model import AttentionAggregator
 from EdgeAssignmentTask.neighborhood_selection.fuzzy_model import FuzzyAggregator
 
+def semantic_attention_loss(
+    attentions:list,
+    y,
+    mask,
+    reg_d = "Protein__rev_reg_disease__Patient",
+    reg_h = "Protein__rev_reg_control__Patient"
+):
+    """
+    Soft supervision over semantic relation attention.
+
+    Args:
+    
+    attentions:list: List of attention dictionaries from all layers.Example:
+                attentions[layer]["Patient"]
+    y:Tensor:Binary labels, shape: [N]
+    disease_index: Index of disease relation attention.
+    control_index: Index of control relation attention.
+
+    Returns:
+        Average attention supervision loss across all layers.
+    """
+    device = attentions[0]['Patient']['attention'].device if 'attention' in attentions[0]['Patient'] else attentions[0]['Patient'].device
+    
+    y = y.to(device)[mask] # Move y to the correct device before masking
+    
+    layer_att = attentions[-1] if isinstance(attentions, list) else attentions
+    # semantic attention tensor: shape:[N, num_relations]
+    beta=layer_att['Patient']['attention'][mask]
+    relation_names = layer_att['Patient']['relation_names']
+    #print(relation_names)
+    
+    # disease/control attentions
+    disease_index = relation_names.index(reg_d) # e.g. 'Protein__rev_reg_disease__Patient'
+    
+    control_index = relation_names.index(reg_h)
+    
+    # disease/control attentions
+    disease_att = beta[:, disease_index]
+    control_att = beta[:, control_index]
+
+    # relative preference logit
+    # positive: disease > control
+    # negative: control > disease
+    att_logit = disease_att - control_att
+
+    # BCE supervision
+    att_loss = F.binary_cross_entropy_with_logits(
+        att_logit, y.float(),)
+
+    return att_loss
 
 def hierarchical_attention_loss(
     attentions:list,
@@ -141,11 +191,11 @@ def train(
 
         att_loss = torch.tensor(0.0, device=device)
         if attention_loss:
-            att_loss = hierarchical_attention_loss(
+            att_loss = semantic_attention_loss(
                 attentions=attention_weights,
                 y=data['Patient'].y,
                 mask=mask,
-                device=device
+                
             )
 
         loss = cls_loss + att_loss
@@ -267,7 +317,8 @@ def run_inner_hpo(
         # negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
         epochs = trial.suggest_categorical(
                                                 "epochs",
-                                                [75, 100, 125, 150, 200]
+                                                # [1,2,3],
+                                                [75, 100, 125, 150]
                                             )
                                                     
         # Single stratified split of trainval_idx
@@ -301,7 +352,8 @@ def run_inner_hpo(
                                     #   out_channels=out_channels,
                                     num_classes=num_classes,
                                     dropout_rate=dropout_rate,
-                                    num_rules=data['Patient'].topo_features.size(1)
+                                    # num rules = num_topo_features + num_edge_types
+                                    num_rules=data['Patient'].topo_features.size(1) + 2,
                                     )
         else:
             raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
@@ -336,18 +388,26 @@ def run_inner_hpo(
                                           data, 
                                           'val_mask', 
                                           randomize=randomize)
-            val_score = val_metrics['F1_score']
+            val_score = val_metrics['AUROC']
             # Report for pruning 
             trial.report(val_score, step=0)
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
 
             # Log metrics for Optuna dashboard
-            trial.set_user_attr("val_f1", float(val_metrics['F1_score']))
-            trial.set_user_attr("val_auroc", float(val_metrics['AUROC']))
-            trial.set_user_attr('val_accuracy', float(val_metrics['Accuracy']))
-            trial.set_user_attr('val_auprc', float(val_metrics['AUPRC']))
-            #trial.set_user_attr("val_hits", float(val_hits))
+            # 1. Combine your data into a dictionary
+            result_data = {
+                "metrics": {
+                    "val_f1": float(val_metrics['F1_score']),
+                    "val_auroc": float(val_metrics['AUROC']),
+                    "val_accuracy": float(val_metrics['Accuracy']),
+                    "val_auprc": float(val_metrics['AUPRC']),
+                },
+                "params": trial.params  # grabs all hyperparameters used in this trial
+            }
+
+            # 2. Save to Optuna
+            trial.set_user_attr("summary", result_data)
 
             return val_score
 
@@ -409,6 +469,7 @@ def retrain_and_evaluate(
                                 hidden_channels=best_params['hidden_channels'],
                                 att_channels=best_params['att_channels'],
                             #   out_channels=best_params['out_channels'],
+                                num_rules=data['Patient'].topo_features.size(1)+2,
                                 num_classes=num_classes,
                                 dropout_rate=best_params['dropout_rate']
                                 )
@@ -430,7 +491,8 @@ def retrain_and_evaluate(
     trained_model = None
     try:
         trained_model, history = train(
-                    model=model, data=data,
+                    model=model, 
+                    data=data,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     epochs=best_params['epochs'],
@@ -467,7 +529,7 @@ def nested_cross_validate(data, args, device,
     num_patients = len(y_all)
     num_classes = int(y_all.max()) + 1
 
-    outer_skf = StratifiedKFold(n_splits=5, shuffle=True, 
+    outer_skf = StratifiedKFold(n_splits=3, shuffle=True, 
                                 random_state=args.seed,
                                 )
     final_results = {}

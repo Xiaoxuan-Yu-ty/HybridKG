@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import MessagePassing
 
 from torch_geometric.utils import softmax
 from torch_geometric.data import HeteroData
@@ -67,8 +68,8 @@ class AttentionAggregator(nn.Module):
         h_protein = self.proj_protein(protein_embeddings)
         
         # encoder handles the nonlinearity consistency 
-        new_x_dict = {'Patient': h_gene, 'Protein': h_protein}
-        h_out, att_dict = self.aggregator(new_x_dict, edge_index_dict)
+        new_x_dict = {'Patient': patient_x, 'Protein': h_protein}
+        h_out, att_dict = self.aggregator(x_dict, edge_index_dict)
         
         h_patient = self.output_norm(h_out['Patient'])
         combined = torch.cat([h_gene, h_patient], dim=-1)
@@ -80,31 +81,3 @@ class AttentionAggregator(nn.Module):
     
     def classify(self, h_patient):
         return self.classifier(h_patient)
-       
-
-class EdgeWeightaggregator(nn.Module):
-    def __init__(self, ) -> None:
-        super().__init__()
-
-        pass
-
-    def forward(self,):
-        pass
-
-class SparseAttentionAggregator(nn.Module):
-    def __init__(self,) -> None:
-        super().__init__()
-
-        pass
-
-    def forward(self,):
-        pass
-
-class GumbelAggregator(nn.Module):
-    def __init__(self, ) -> None:
-        super().__init__()
-
-        pass
-
-    def forward(self,):
-        pass

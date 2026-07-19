@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from GateEmbeddingTask.encoders import get_encoder, HRGATLayer
+from GateEmbeddingTask.encoders import get_encoder, HRGATEncoder
 
 
 
@@ -31,7 +31,7 @@ class FuzzyRuleLayer(nn.Module):
             r: Tensor [N, 6] fuzzy rule activations
         """
         # Ensure correct dimensionality
-        assert topo_features.size(1) == self.num_rules
+        #assert topo_features.size(1) == self.num_rules
 
         # r_i(u) = sigmoid(alpha_i * (f_i(u) - theta_i))
         r = torch.sigmoid(self.alpha * (topo_features - self.theta))
@@ -84,8 +84,10 @@ class FuzzyAggregator(nn.Module):
     def __init__(self, data, 
                  hidden_channels, att_channels,
                  num_classes,
-                 dropout_rate, negative_slope=0.2,
-                 num_rules = 3):
+                 dropout_rate, 
+                 num_rules,
+                 negative_slope=0.2,
+                 ):
         super().__init__()
 
         self.dropout_rate = dropout_rate
@@ -100,12 +102,13 @@ class FuzzyAggregator(nn.Module):
         self.input_norm = nn.LayerNorm(hidden_channels)
         self.output_norm = nn.LayerNorm(hidden_channels)
 
-        self.aggregator = HRGATLayer(
-                metadata=(data.node_types, data.edge_types),
-                in_dim=hidden_channels,
-                out_dim=hidden_channels,
-                att_dim=att_channels,
-                dropout=dropout_rate,
+        self.aggregator = HRGATEncoder(
+                data=data,
+                hidden_channels=hidden_channels,
+                out_channels=hidden_channels,
+                att_channels=att_channels,
+                num_layers=1,
+                dropout_rate=dropout_rate,
                 negative_slope=negative_slope,
             ) 
         
@@ -140,8 +143,8 @@ class FuzzyAggregator(nn.Module):
         h_protein = self.proj_protein(protein_embeddings)
         
         # encoder handles the nonlinearity consistency 
-        new_x_dict = {'Patient': h_gene, 'Protein': h_protein}
-        h_out, att_dict = self.aggregator(new_x_dict, edge_index_dict)
+        # new_x_dict = {'Patient': h_gene, 'Protein': h_protein}
+        h_out, att_dict = self.aggregator(x_dict, edge_index_dict)
         
         h_patient = self.output_norm(h_out['Patient'])
         combined = torch.cat([h_gene, h_patient], dim=-1)
@@ -152,7 +155,13 @@ class FuzzyAggregator(nn.Module):
         # ------- concatenate with topological features ------------------
         embedding = h_fused
         r=None
+        # add edge_type attention to topo_features
+        layer_att = att_dict[-1] if isinstance(att_dict, list) else att_dict
+        # semantic attention tensor: shape:[N, num_relations]
+        beta=torch.tensor(layer_att['Patient']['attention'])
+    
         if topo_features is not None:
+            topo_features = torch.cat([topo_features, beta], dim=-1)
             r = self.fuzzy_layer(topo_features)
             e = self.rule_proj(r) # project topo features to hidden space
             g = torch.sigmoid(self.rule_gate(torch.cat([h_fused, e], dim=1)))

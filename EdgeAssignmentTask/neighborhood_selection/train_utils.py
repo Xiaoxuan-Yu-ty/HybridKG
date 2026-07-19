@@ -296,7 +296,8 @@ class PatientProteinNetworkGenerator():
         
         return G, summary_df
 
-def compute_topological_features(G, label_homophily=False):
+
+def compute_topological_features(G, node_type='Patient',label_homophily=False):
     """
     Compute topological features for patient nodes in the graph.
     
@@ -308,7 +309,7 @@ def compute_topological_features(G, label_homophily=False):
     """
     print("Computing topological features...")
     
-    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')=='Patient']
+    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')==node_type]
     degrees = np.array([G.degree(n) for n in nodes])
 
     avg_neighbor_degrees = nx.average_neighbor_degree(G)
@@ -317,7 +318,8 @@ def compute_topological_features(G, label_homophily=False):
     labels = [G.nodes[node].get('y') for node in nodes]
     
     # Centrality measures
-    degree_centrality = np.array(list(nx.degree_centrality(G).values()))
+    all_degree_centrality = nx.degree_centrality(G)
+    degree_centrality = np.array([all_degree_centrality[node] for node in nodes])
     
     # Average edge weight
     avg_edge_weight = []
@@ -338,7 +340,7 @@ def compute_topological_features(G, label_homophily=False):
     
     features = {
             'degrees': degrees,
-            'avg_neighborhood_degrees':avg_neighbor_degrees,
+            'avg_neighborhood_degrees':mean_neighbor_degrees,
             'degree_centrality': degree_centrality,
             'avg_edge_weight': avg_edge_weight
         }
@@ -362,15 +364,16 @@ def compute_topological_features(G, label_homophily=False):
 
         features = {
             'degrees': degrees,
-            'avg_neighborhood_degrees':avg_neighbor_degrees,
+            'avg_neighborhood_degrees':mean_neighbor_degrees,
             'two_hop_agreement': two_hop_agreement,
             'degree_centrality': degree_centrality,
             'avg_edge_weight': avg_edge_weight
         }
     
-        return features
+    return features
 
-def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
+
+def paprnetwork_to_hetero_data(G: nx.MultiDiGraph, topo_features=True, label_homophily=True):
     """
     Converts the Patient-Protein network into a PyTorch Geometric HeteroData object.
     .
@@ -400,8 +403,15 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
         x = torch.tensor([G.nodes[nid]['x'] for nid in n_ids], dtype=torch.float)
         data[n_type].x = x
         data[n_type].y = torch.tensor([G.nodes[nid]['y'] for nid in n_ids], dtype=torch.long)
+
+        if topo_features:
+            nt_topo_features = compute_topological_features(G, node_type=n_type,label_homophily=label_homophily)
+
+            nt_topo = np.vstack([nt_topo_features[name] for name in nt_topo_features.keys()]).T
+            data[n_type].topo_features = torch.tensor(nt_topo,dtype=torch.float)
+
         
-    # 4. Process Edges with separation
+    # 3. Process Edges
     edges_dict = {}
     for u, v, r, attrs in G.edges(keys=True, data=True):
         u_type = G.nodes[u].get('type') or G.nodes[u].get('label')
@@ -431,4 +441,54 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
     
     return data, node_mappings 
 
+def merge_patient_protein_edges(data):
+    """Rebuild HeteroData() with merged Patient-Proetin edges."""
+    new_data = HeteroData()
+    
+    # Copy node features
+    for node_type in data.node_types:
+        for key, value in data[node_type].items():
+            new_data[node_type][key] = value
 
+    # Collect edges
+    d_edges = []
+    rev_d_edges = []
+
+    h_edges = []
+    rev_h_edges = []
+
+    # Keep unrelated edge types
+    for et in data.edge_types:
+        src, rel, dst = et
+        edge_index = data[et].edge_index
+
+        # Patient <-> Protein relations
+        if (src == 'Patient' and dst == 'Protein') or (src == 'Protein' and dst == 'Patient'):
+
+            # reverse edges
+            if 'rev' in rel:
+                if 'd' in rel:
+                    rev_d_edges.append(edge_index)
+                else:
+                    rev_h_edges.append(edge_index)
+            # forward edges
+            else:
+                if 'd' in rel:
+                    d_edges.append(edge_index)
+                else:
+                    h_edges.append(edge_index)
+
+        # keep other edge types
+        else:
+            new_data[et].edge_index = edge_index
+
+    # Merge disease relations
+    new_data[('Patient', 'reg_disease', 'Protein')].edge_index = torch.cat(d_edges,dim=1,)
+    # Merge healthy relations
+    new_data[('Patient', 'reg_control', 'Protein')].edge_index = torch.cat(h_edges,dim=1,)
+    # Reverse disease
+    new_data[('Protein', 'rev_reg_disease', 'Patient')].edge_index = torch.cat(rev_d_edges,dim=1,)
+    # Reverse healthy
+    new_data[('Protein', 'rev_reg_control', 'Patient')].edge_index = torch.cat(rev_h_edges,dim=1,)
+
+    return new_data
