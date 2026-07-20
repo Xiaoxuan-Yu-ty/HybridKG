@@ -3,14 +3,14 @@
 # Define your parameter combinations
 DISEASE_KGS=("AD_KG" "PPI_KG" "Prime_KG")
 DATASETS=("adni" "ANMerge" "geo")
-AGGREGATORS=("fuzzy_attention")
+AGGREGATORS=("attention" "fuzzy_attention")
 
 for kg in "${DISEASE_KGS[@]}"; do
     # Set paths based on DiseaseKG
     case $kg in
-        "AD_KG")   graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/AD_KG/G_merge_AD_KG_healthy.pkl";   embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/AD_KG/embedding.csv" ;;
-        "PPI_KG")  graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/PPI_KG/G_merge_PPI_KG_healthy.pkl";  embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/PPI_KG/embedding.csv" ;;
-        "Prime_KG") graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/Prime_KG/G_merge_Prime_KG_healthy.pkl"; embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/Prime_KG/embedding.csv" ;;
+        "AD_KG")   graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge_allnodes/AD_KG/G_merge_AD_KG_healthy.pkl";   embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/AD_KG/embedding.csv" ;;
+        "PPI_KG")  graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge_allnodes//PPI_KG/G_merge_PPI_KG_healthy.pkl";  embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/PPI_KG/embedding.csv" ;;
+        "Prime_KG") graph_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge_allnodes//Prime_KG/G_merge_Prime_KG_healthy.pkl"; embedding_path="./EdgeAssignmentTask/neighborhood_selection/results/pykeen_kge/Prime_KG/embedding.csv" ;;
     esac
 
     for ds in "${DATASETS[@]}"; do
@@ -35,7 +35,8 @@ for kg in "${DISEASE_KGS[@]}"; do
                 --exp_path "$exp_path" \
                 --design "$design_path" \
                 --output_dir "./EdgeAssignmentTask/gumbel_softmax/results/no_label_homophily" \
-                --num_trial 20
+                --num_trial 60 \
+                --hpo
 
 
             if [ $? -ne 0 ]; then
