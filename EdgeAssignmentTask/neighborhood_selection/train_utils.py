@@ -11,6 +11,12 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.data import HeteroData
 from tqdm import tqdm
 
+import os
+import json
+from typing import Optional
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -297,7 +303,83 @@ class PatientProteinNetworkGenerator():
         return G, summary_df
 
 
-def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
+def compute_topological_features(G, node_type='Patient',label_homophily=False):
+    """
+    Compute topological features for patient nodes in the graph.
+    
+    Args:
+        G: NetworkX graph object
+        
+    Returns:
+        dict: Dictionary containing topological features for each node
+    """
+    print("Computing topological features...")
+    
+    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')==node_type]
+    degrees = np.array([G.degree(n) for n in nodes])
+
+    avg_neighbor_degrees = nx.average_neighbor_degree(G)
+    mean_neighbor_degrees = np.array([avg_neighbor_degrees[n] for n in nodes])
+    
+    labels = [G.nodes[node].get('y') for node in nodes]
+    
+    # Centrality measures
+    all_degree_centrality = nx.degree_centrality(G)
+    degree_centrality = np.array([all_degree_centrality[node] for node in nodes])
+    
+    # Average edge weight
+    avg_edge_weight = []
+    for n in nodes:
+        if G.degree(n) > 0:
+            neibor_weights = []
+            for m in G.neighbors(n):
+                edge_data_dict = G[n][m] 
+                # edge_data_dict looks like: {0: {'weight': 0.1, ...}, 1: {'weight': 0.5, ...}}
+                for edge_key, attributes in edge_data_dict.items():
+                    weight = attributes.get('weight', 0)
+                    neibor_weights.append(weight)
+                    #print(weight)
+            avg_edge_weight.append(np.mean(neibor_weights))
+        else:
+            avg_edge_weight.append(0.0)
+    avg_edge_weight = np.array(avg_edge_weight)
+    
+    features = {
+            'degrees': degrees,
+            'avg_neighborhood_degrees':mean_neighbor_degrees,
+            'degree_centrality': degree_centrality,
+            'avg_edge_weight': avg_edge_weight
+        }
+
+    # Two-hop agreement
+    if label_homophily:
+        two_hop_agreement = []
+        for n in tqdm(nodes, desc="Computing two-hop agreement"):
+            d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
+            d22 = list(d2)
+            for neighbor in d2:
+                if neighbor == n or G.nodes()[neighbor].get('label')!= node_type:
+                    d22.remove(neighbor)
+            # print(d22)
+            if d22:
+                lbls = [G.nodes[m]['y'] for m in d22]
+                two_hop_agreement.append(lbls.count(G.nodes[n]['y']) / len(lbls))
+            else:
+                two_hop_agreement.append(0.0)
+        two_hop_agreement = np.array(two_hop_agreement)
+
+        features = {
+            'degrees': degrees,
+            'avg_neighborhood_degrees':mean_neighbor_degrees,
+            'two_hop_agreement': two_hop_agreement,
+            'degree_centrality': degree_centrality,
+            'avg_edge_weight': avg_edge_weight
+        }
+    
+    return features
+
+
+def paprnetwork_to_hetero_data(G: nx.MultiDiGraph, topo_features=True, label_homophily=True):
     """
     Converts the Patient-Protein network into a PyTorch Geometric HeteroData object.
     .
@@ -327,8 +409,15 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
         x = torch.tensor([G.nodes[nid]['x'] for nid in n_ids], dtype=torch.float)
         data[n_type].x = x
         data[n_type].y = torch.tensor([G.nodes[nid]['y'] for nid in n_ids], dtype=torch.long)
+
+        if topo_features:
+            nt_topo_features = compute_topological_features(G, node_type=n_type,label_homophily=label_homophily)
+
+            nt_topo = np.vstack([nt_topo_features[name] for name in nt_topo_features.keys()]).T
+            data[n_type].topo_features = torch.tensor(nt_topo,dtype=torch.float)
+
         
-    # 4. Process Edges with separation
+    # 3. Process Edges
     edges_dict = {}
     for u, v, r, attrs in G.edges(keys=True, data=True):
         u_type = G.nodes[u].get('type') or G.nodes[u].get('label')
@@ -358,78 +447,182 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
     
     return data, node_mappings 
 
-import numpy as np
+def merge_patient_protein_edges(data):
+    """Rebuild HeteroData() with merged Patient-Proetin edges."""
+    new_data = HeteroData()
+    
+    # Copy node features
+    for node_type in data.node_types:
+        for key, value in data[node_type].items():
+            new_data[node_type][key] = value
 
-def compute_topological_features(G, label_homophily=False):
-    """
-    Compute topological features for patient nodes in the graph.
-    
-    Args:
-        G: NetworkX graph object
-        
-    Returns:
-        dict: Dictionary containing topological features for each node
-    """
-    print("Computing topological features...")
-    
-    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')=='Patient']
-    degrees = np.array([G.degree(n) for n in nodes])
+    # Collect edges
+    d_edges = []
+    rev_d_edges = []
 
-    avg_neighbor_degrees = nx.average_neighbor_degree(G)
-    mean_neighbor_degrees = np.array([avg_neighbor_degrees[n] for n in nodes])
-    
-    labels = [G.nodes[node].get('y') for node in nodes]
-    
-    # Centrality measures
-    degree_centrality = np.array(list(nx.degree_centrality(G).values()))
-    
-    # Average edge weight
-    avg_edge_weight = []
-    for n in nodes:
-        if G.degree(n) > 0:
-            neibor_weights = []
-            for m in G.neighbors(n):
-                edge_data_dict = G[n][m] 
-                # edge_data_dict looks like: {0: {'weight': 0.1, ...}, 1: {'weight': 0.5, ...}}
-                for edge_key, attributes in edge_data_dict.items():
-                    weight = attributes.get('weight', 0)
-                    neibor_weights.append(weight)
-                    #print(weight)
-            avg_edge_weight.append(np.mean(neibor_weights))
-        else:
-            avg_edge_weight.append(0.0)
-    avg_edge_weight = np.array(avg_edge_weight)
-    
-    features = {
-            'degrees': degrees,
-            'avg_neighborhood_degrees':avg_neighbor_degrees,
-            'degree_centrality': degree_centrality,
-            'avg_edge_weight': avg_edge_weight
-        }
+    h_edges = []
+    rev_h_edges = []
 
-    # Two-hop agreement
-    if label_homophily:
-        two_hop_agreement = []
-        for n in tqdm(nodes, desc="Computing two-hop agreement"):
-            d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
-            d22 = list(d2)
-            for neighbor in d2:
-                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient':
-                    d22.remove(neighbor)
-            # print(d22)
-            if d22:
-                lbls = [G.nodes[m]['y'] for m in d22]
-                two_hop_agreement.append(lbls.count(G.nodes[n]['y']) / len(lbls))
+    # Keep unrelated edge types
+    for et in data.edge_types:
+        src, rel, dst = et
+        edge_index = data[et].edge_index
+
+        # Patient <-> Protein relations
+        if (src == 'Patient' and dst == 'Protein') or (src == 'Protein' and dst == 'Patient'):
+
+            # reverse edges
+            if 'rev' in rel:
+                if 'd' in rel:
+                    rev_d_edges.append(edge_index)
+                else:
+                    rev_h_edges.append(edge_index)
+            # forward edges
             else:
-                two_hop_agreement.append(0.0)
-        two_hop_agreement = np.array(two_hop_agreement)
+                if 'd' in rel:
+                    d_edges.append(edge_index)
+                else:
+                    h_edges.append(edge_index)
 
-        features = {
-            'degrees': degrees,
-            'avg_neighborhood_degrees':avg_neighbor_degrees,
-            'two_hop_agreement': two_hop_agreement,
-            'degree_centrality': degree_centrality,
-            'avg_edge_weight': avg_edge_weight
-        }
+        # keep other edge types
+        else:
+            new_data[et].edge_index = edge_index
+
+    # Merge disease relations
+    new_data[('Patient', 'reg_disease', 'Protein')].edge_index = torch.cat(d_edges,dim=1,)
+    # Merge healthy relations
+    new_data[('Patient', 'reg_control', 'Protein')].edge_index = torch.cat(h_edges,dim=1,)
+    # Reverse disease
+    new_data[('Protein', 'rev_reg_disease', 'Patient')].edge_index = torch.cat(rev_d_edges,dim=1,)
+    # Reverse healthy
+    new_data[('Protein', 'rev_reg_control', 'Patient')].edge_index = torch.cat(rev_h_edges,dim=1,)
+
+    return new_data
+
+
+def parse_cv_metrics(root_dir):
+    extracted_data = []
     
-        return features
+    # Recursively traverse the directory tree starting from aggregator2
+    for dirpath, _, filenames in os.walk(root_dir):
+        if "cv_metrics.json" in filenames:
+            # Get relative path to parse folder components
+            # Structure: dataset / kg / scoring_threshold / model_type
+            rel_path = os.path.relpath(dirpath, root_dir)
+            parts = rel_path.split(os.sep)
+            
+            # Ensure the path has the expected depth
+            if len(parts) >= 4:
+                dataset = parts[0]
+                kg = parts[1]
+                scoring_method = parts[2]
+                model_type = parts[3]
+                
+                file_path = os.path.join(dirpath, "cv_metrics.json")
+                try:
+                    with open(file_path, "r") as f:
+                        content = json.load(f)
+                        
+                        # Extract folds metrics
+                        folds = content.get("folds", {})
+                        for fold_name, fold_data in folds.items():
+                            metrics = fold_data.get("metrics", {})
+                            for metric_name, value in metrics.items():
+                                extracted_data.append({
+                                    "dataset": dataset,
+                                    "kg": kg,
+                                    "scoring_method": scoring_method,
+                                    "model_type": model_type,
+                                    "fold": fold_name,
+                                    "metric": metric_name,
+                                    "value": value
+                                })
+                except Exception as e:
+                    print(f"Error parsing {file_path}: {e}")
+                    
+    return pd.DataFrame(extracted_data)
+
+
+def plot_fold_metric_comparison(df, 
+                                metric_name:str='AUROC', 
+                                kg:Optional[str]='AD_KG', 
+                                scoring_method:Optional[str]='ecdf_5', 
+                                model_type:Optional[str]='attention',
+                                hue:str='model_type',):
+    """
+    Plots a box plot comparing fold metrics across datasets with selectable filters.
+    
+    Parameters:
+    - df: pandas DataFrame containing the extracted metrics.
+    - metric_name: str, the metric to plot (e.g., 'Accuracy', 'AUROC', 'F1_score', 'AUPRC').
+    - kg: str or None, filter by Knowledge Graph(s) (e.g., 'AD_KG', 'PPI'). If None, includes all.
+    - scoring_threshold: str or None, filter by threshold(s) (e.g., 'ecdf_2.5'). If None, includes all.
+    - model_type: str or None, filter by model type(s) (e.g., 'attention', 'fuzzy_attention'). If None, includes all.
+    """
+    # 1. Filter dataframe based on arguments
+    filtered_df = df[df["metric"] == metric_name].copy()
+    
+    if kg is not None:
+        kg_list = kg if isinstance(kg, list) else [kg]
+        filtered_df = filtered_df[filtered_df["kg"].isin(kg_list)]
+        
+    if scoring_method is not None:
+        scoring_method_list = scoring_method if isinstance(scoring_method, list) else [scoring_method]
+        filtered_df = filtered_df[filtered_df["scoring_method"].isin(scoring_method_list)]
+        
+    if model_type is not None:
+        model_type_list = model_type if isinstance(model_type, list) else [model_type]
+        filtered_df = filtered_df[filtered_df["model_type"].isin(model_type_list)]
+        
+    if filtered_df.empty:
+        print(f"No data available for {metric_name} with the given filters.")
+        return
+
+    # 2. Set up the visualization
+    plt.figure(figsize=(10, 6))
+    
+    # use boxplot to see the distribution of fold values across datasets/models
+    # hue can be used to distinguish model types if multiple are selected
+    sns.boxplot(
+        data=filtered_df,
+        x="dataset",
+        y="value",
+        hue=hue,
+        palette="Set2",
+        boxprops=dict(alpha=0.8)
+    )
+    
+    # Overlay individual fold points for transparency and clarity
+    sns.stripplot(
+        data=filtered_df,
+        x="dataset",
+        y="value",
+        hue=hue,
+        dodge=True,
+        color="black",
+        alpha=0.6,
+        jitter=True,
+        legend=False
+    )
+
+    # 3. Titles and Labels
+    filter_desc = []
+    if kg: filter_desc.append(f"KG: {', '.join(kg)}")
+    if scoring_method: filter_desc.append(f"Threshold: {', '.join(scoring_method)}")
+    if model_type:filter_desc.append(f"Model_Type: {', '.join(model_type)}")
+    subtitle = f" | ".join(filter_desc)
+    
+    plt.title(f"Fold Distribution of {metric_name}\n({subtitle})", fontsize=12, fontweight="bold")
+    plt.xlabel("Dataset", fontsize=11)
+    plt.ylabel(metric_name, fontsize=11)
+    
+    plt.legend(title=hue.upper(), bbox_to_anchor=(1.05, 1), loc="upper left")
+        
+    plt.grid(axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    
+    # Save and display
+    filename = f"boxplot_{metric_name}.png"
+    #plt.savefig(filename, dpi=300)
+    plt.show()
+    print(f"Plot saved successfully as '{filename}'")

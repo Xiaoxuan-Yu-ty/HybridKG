@@ -34,7 +34,58 @@ from GateEmbeddingTask.train_utils import (
     get_device
 )
 from EdgeAssignmentTask.neighborhood_selection.model import AttentionAggregator
+from EdgeAssignmentTask.neighborhood_selection.fuzzy_model import FuzzyAggregator
 
+def semantic_attention_loss(
+    attentions:list,
+    y,
+    mask,
+    reg_d = "Protein__rev_reg_disease__Patient",
+    reg_h = "Protein__rev_reg_control__Patient"
+):
+    """
+    Soft supervision over semantic relation attention.
+
+    Args:
+    
+    attentions:list: List of attention dictionaries from all layers.Example:
+                attentions[layer]["Patient"]
+    y:Tensor:Binary labels, shape: [N]
+    disease_index: Index of disease relation attention.
+    control_index: Index of control relation attention.
+
+    Returns:
+        Average attention supervision loss across all layers.
+    """
+    device = attentions[0]['Patient']['attention'].device if 'attention' in attentions[0]['Patient'] else attentions[0]['Patient'].device
+    
+    y = y.to(device)[mask] # Move y to the correct device before masking
+    
+    layer_att = attentions[-1] if isinstance(attentions, list) else attentions
+    # semantic attention tensor: shape:[N, num_relations]
+    beta=layer_att['Patient']['attention'][mask]
+    relation_names = layer_att['Patient']['relation_names']
+    #print(relation_names)
+    
+    # disease/control attentions
+    disease_index = relation_names.index(reg_d) # e.g. 'Protein__rev_reg_disease__Patient'
+    
+    control_index = relation_names.index(reg_h)
+    
+    # disease/control attentions
+    disease_att = beta[:, disease_index]
+    control_att = beta[:, control_index]
+
+    # relative preference logit
+    # positive: disease > control
+    # negative: control > disease
+    att_logit = disease_att - control_att
+
+    # BCE supervision
+    att_loss = F.binary_cross_entropy_with_logits(
+        att_logit, y.float(),)
+
+    return att_loss
 
 def hierarchical_attention_loss(
     attentions:list,
@@ -107,16 +158,14 @@ def train(
     model,
     data: HeteroData,
     optimizer,
+    scheduler,
     epochs: int,
     device,
-    metric:str = 'AUROC',
-    val_mask_name: str = 'val_mask',
     attention_loss=False,
     randomize=True,
 ):
-
-    best_composite = 0.0
-    best_state = None
+    # best_composite = 0.0
+    # best_state = None
     history = {}
     for epoch in tqdm(range(epochs), desc="Aggregator Training"):
         model.train()
@@ -125,14 +174,16 @@ def train(
         mask = data['Patient'].train_mask
 
         if randomize:
-            h_out, attention_weights = model(
+            h_out, attention_weights, fuzzy_rules = model(
             x_dict=None,
-            edge_index_dict=data.edge_index_dict
+            edge_index_dict=data.edge_index_dict,
+            topo_features=data['Patient'].topo_features
         )
         else:
-            h_out, attention_weights = model(
+            h_out, attention_weights, fuzzy_rules = model(
                 x_dict=data.x_dict,
-                edge_index_dict=data.edge_index_dict
+                edge_index_dict=data.edge_index_dict,
+                topo_features=data['Patient'].topo_features
             )
         h_patient=model.classify(h_out)
 
@@ -140,56 +191,62 @@ def train(
 
         att_loss = torch.tensor(0.0, device=device)
         if attention_loss:
-            att_loss = hierarchical_attention_loss(
+            att_loss = semantic_attention_loss(
                 attentions=attention_weights,
                 y=data['Patient'].y,
                 mask=mask,
-                device=device
+                
             )
 
         loss = cls_loss + att_loss
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
+        scheduler.step()
 
         # Evaluate
-        val_metrics, _ = evaluate_cls(
-            model=model, 
-            data=data, 
-            mask_name=val_mask_name)
+        # val_metrics, _ = evaluate_cls(
+        #     model=model, 
+        #     data=data, 
+        #     mask_name=val_mask_name,
+        #     randomize=randomize)
         
-        score = val_metrics[metric]
+        # score = val_metrics[metric]
 
         history[epoch] = {
             'cls_loss': float(cls_loss.detach()),
             'att_loss': float(att_loss.detach()),
-            'val_metrics': val_metrics,
+            # 'val_metrics': val_metrics,
         }
 
-        if score > best_composite:
-            best_composite = score
-            best_state = {
-                k: v.detach().cpu().clone()
-                for k, v in model.state_dict().items()
-            }
+    #     if score > best_composite:
+    #         best_composite = score
+    #         best_state = {
+    #             k: v.detach().cpu().clone()
+    #             for k, v in model.state_dict().items()
+    #         }
 
-    if best_state is not None:
-        model.load_state_dict(best_state)
+    # if best_state is not None:
+    #     model.load_state_dict(best_state)
 
-    print(f"Best {metric} on validation set: {best_composite:.4f}")
-    return model, history, best_composite
+    # print(f"Best {metric} on validation set: {best_composite:.4f}")
+    return model, history
 
 @torch.no_grad()
-def evaluate_cls(model, data, mask_name, randomize=True):
+def evaluate_cls(model, data, mask_name, randomize=True,):
     model.eval()
     if randomize:
-            h_out, attention_weights = model(
+            h_out, attention_weights, fuzzy_rules = model(
             x_dict=None,
-            edge_index_dict=data.edge_index_dict
+            edge_index_dict=data.edge_index_dict,
+            topo_features=data['Patient'].topo_features
         )
     else:
-        h_out, attention_weights = model(
+        h_out, attention_weights, fuzzy_rules = model(
             x_dict=data.x_dict,
-            edge_index_dict=data.edge_index_dict
+            edge_index_dict=data.edge_index_dict,
+            topo_features=data['Patient'].topo_features
         )
    
     h_patient=model.classify(h_out)
@@ -215,8 +272,18 @@ def evaluate_cls(model, data, mask_name, randomize=True):
     
     # attention_weights format: [{NodeType: {'relation_names':list[str], 'attention':torch.Tensor}}]
     masked_attention = attention_weights 
+
+    # Fuzzy rule activations
+    fuzzy_params = {}
+    if fuzzy_rules is not None:
+        fuzzy_rules = fuzzy_rules.cpu()
+        fuzzy_params = {
+            "theta": getattr(model.fuzzy_layer, "theta", None),
+            "alpha": getattr(model.fuzzy_layer, "alpha", None),
+            "rules":fuzzy_rules
+        }
         
-    return metrics, masked_attention
+    return metrics, masked_attention, fuzzy_params 
 
 def run_inner_hpo(
     db_url,
@@ -228,6 +295,7 @@ def run_inner_hpo(
     num_patients,
     num_classes,
     outer_fold,
+    aggregator:str,
     attention_loss=False,
     randomize=True,
 ):
@@ -237,15 +305,22 @@ def run_inner_hpo(
     Test set (outer fold) is never seen here.
     """
     def inner_objective(trial):
+
+        set_seed(args.seed)
         # --- Suggest hyperparameters ---
         lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
         weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-4, log=True)
         hidden_channels = trial.suggest_categorical("hidden_channels", [64, 128, 256])
-        out_channels = trial.suggest_categorical("out_channels", [64, 128, 256])
+        # out_channels = trial.suggest_categorical("out_channels", [64, 128, 256])
         att_channels = trial.suggest_categorical("att_channels", [32, 64, 128])
         dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5)
         # negative_slope = trial.suggest_float("negative_slope", 0.1, 0.5)
-        
+        epochs = trial.suggest_categorical(
+                                                "epochs",
+                                                # [1,2,3],
+                                                [75, 100, 125, 150]
+                                            )
+                                                    
         # Single stratified split of trainval_idx
         # Use fixed random_state for reproducibility across trials
         train_rel, val_rel = train_test_split(
@@ -262,44 +337,79 @@ def run_inner_hpo(
         data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
         data['Patient'].val_mask[val_abs] = True
 
-        model = AttentionAggregator(data=data,
-                                  hidden_channels=hidden_channels,
-                                  att_channels=att_channels,
-                                  out_channels=out_channels,
-                                  num_classes=num_classes,
-                                  dropout_rate=dropout_rate
-                                  )
+        if aggregator == 'attention':
+            model = AttentionAggregator(data=data,
+                                    hidden_channels=hidden_channels,
+                                    att_channels=att_channels,
+                                    #   out_channels=out_channels,
+                                    num_classes=num_classes,
+                                    dropout_rate=dropout_rate
+                                    )
+        elif aggregator == 'fuzzy_attention':
+            model = FuzzyAggregator(data=data,
+                                    hidden_channels=hidden_channels,
+                                    att_channels=att_channels,
+                                    #   out_channels=out_channels,
+                                    num_classes=num_classes,
+                                    dropout_rate=dropout_rate,
+                                    # num rules = num_topo_features + num_edge_types
+                                    num_rules=data['Patient'].topo_features.size(1) + 2,
+                                    )
+        else:
+            raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
+        
         model.to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            weight_decay=weight_decay,
+        )
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=epochs,
+        )
     
         trained_model = None
         try:
-            trained_model, history, best_composite = train(
+            trained_model, history = train(
                     model=model, 
                     data=data,
                     optimizer=optimizer,
-                    epochs=args.epochs,
+                    scheduler=scheduler,
+                    epochs=epochs,
                     device=device,
-                    val_mask_name='val_mask',
                     attention_loss=attention_loss,
                     randomize=randomize,
                 )
 
-            val_metrics, _ = evaluate_cls(trained_model, data, 'val_mask', randomize=randomize)
-            
-            # Report for pruning — single step since no inner folds
-            trial.report(best_composite, step=0)
+            val_metrics, _, _ = evaluate_cls(
+                                          trained_model, 
+                                          data, 
+                                          'val_mask', 
+                                          randomize=randomize)
+            val_score = val_metrics['AUROC']
+            # Report for pruning 
+            trial.report(val_score, step=0)
             if trial.should_prune():
                 raise optuna.exceptions.TrialPruned()
 
             # Log metrics for Optuna dashboard
-            trial.set_user_attr("val_f1", float(val_metrics['F1_score']))
-            trial.set_user_attr("val_auroc", float(val_metrics['AUROC']))
-            trial.set_user_attr('val_accuracy', float(val_metrics['Accuracy']))
-            trial.set_user_attr('val_auprc', float(val_metrics['AUPRC']))
-            #trial.set_user_attr("val_hits", float(val_hits))
+            # 1. Combine your data into a dictionary
+            result_data = {
+                "metrics": {
+                    "val_f1": float(val_metrics['F1_score']),
+                    "val_auroc": float(val_metrics['AUROC']),
+                    "val_accuracy": float(val_metrics['Accuracy']),
+                    "val_auprc": float(val_metrics['AUPRC']),
+                },
+                "params": trial.params  # grabs all hyperparameters used in this trial
+            }
 
-            return best_composite
+            # 2. Save to Optuna
+            trial.set_user_attr("summary", result_data)
+
+            return val_score
 
         finally:
             del model, optimizer
@@ -328,10 +438,10 @@ def retrain_and_evaluate(
     device,
     trainval_idx,
     test_idx,
-    y_all,
     num_patients,
     num_classes,
     best_params,
+    aggregator:str,
     attention_loss=False,
     randomize=True,
 ):
@@ -340,31 +450,32 @@ def retrain_and_evaluate(
     evaluates on locked test set.
     Returns fold_metrics, history, attention_weights.
     """
-    # Hold out small val split from trainval for monitoring only
-    # (no early stopping on it — just for logging)
-    trainval_train_rel, trainval_val_rel = train_test_split(
-        np.arange(len(trainval_idx)),
-        test_size=0.1,
-        stratify=y_all[trainval_idx],
-        random_state=args.seed,
-    )
-    trainval_train_abs = trainval_idx[trainval_train_rel]
-    trainval_val_abs = trainval_idx[trainval_val_rel]
 
     data['Patient'].train_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
-    data['Patient'].train_mask[trainval_train_abs] = True
-    data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
-    data['Patient'].val_mask[trainval_val_abs] = True
+    data['Patient'].train_mask[trainval_idx] = True
     data['Patient'].test_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
     data['Patient'].test_mask[test_idx] = True
 
-    model = AttentionAggregator(data=data,
-                                  hidden_channels=best_params['hidden_channels'],
-                                  att_channels=best_params['att_channels'],
-                                  out_channels=best_params['out_channels'],
-                                  num_classes=num_classes,
-                                  dropout_rate=best_params['dropout_rate']
-                                  )
+    if aggregator == 'attention':
+        model = AttentionAggregator(data=data,
+                                hidden_channels=best_params['hidden_channels'],
+                                att_channels=best_params['att_channels'],
+                            #   out_channels=best_params['out_channels'],
+                                num_classes=num_classes,
+                                dropout_rate=best_params['dropout_rate']
+                                )
+    elif aggregator == 'fuzzy_attention':
+        model = FuzzyAggregator(data=data,
+                                hidden_channels=best_params['hidden_channels'],
+                                att_channels=best_params['att_channels'],
+                            #   out_channels=best_params['out_channels'],
+                                num_rules=data['Patient'].topo_features.size(1)+2,
+                                num_classes=num_classes,
+                                dropout_rate=best_params['dropout_rate']
+                                )
+    else:
+        raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
+    
     model.to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -372,21 +483,27 @@ def retrain_and_evaluate(
         weight_decay=best_params['weight_decay'],
     )
 
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=best_params['epochs'],
+    )
+
     trained_model = None
     try:
-        trained_model, history, best_composite = train(
-                    model=model, data=data,
+        trained_model, history = train(
+                    model=model, 
+                    data=data,
                     optimizer=optimizer,
-                    epochs=args.epochs,
+                    scheduler=scheduler,
+                    epochs=best_params['epochs'],
                     device=device,
-                    val_mask_name='val_mask',
                     attention_loss=attention_loss, 
                     randomize=randomize,
                 )
 
         # Evaluate on locked test set
-        fold_metrics, attention_weights = evaluate_cls(trained_model, data, 'test_mask', randomize=randomize)
-        return fold_metrics, history, attention_weights
+        fold_metrics, attention_weights, fuzzy_params = evaluate_cls(trained_model, data, 'test_mask', randomize=randomize)
+        return fold_metrics, history, attention_weights, fuzzy_params
 
     finally:
         del model, optimizer
@@ -397,6 +514,7 @@ def retrain_and_evaluate(
 
 
 def nested_cross_validate(data, args, device, 
+                          aggregator:str,
                           db_url=None, 
                           best_params=None, 
                           do_hpo=True, 
@@ -411,9 +529,12 @@ def nested_cross_validate(data, args, device,
     num_patients = len(y_all)
     num_classes = int(y_all.max()) + 1
 
-    outer_skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    outer_skf = StratifiedKFold(n_splits=3, shuffle=True, 
+                                random_state=args.seed,
+                                )
     final_results = {}
     attention_archive = {}
+    fuzzy_params = {}
 
     for outer_fold, (trainval_idx, test_idx) in enumerate(
         outer_skf.split(np.zeros(num_patients), y_all)
@@ -437,6 +558,7 @@ def nested_cross_validate(data, args, device,
                     num_patients=num_patients,
                     num_classes=num_classes,
                     outer_fold=outer_fold,
+                    aggregator=aggregator,
                     attention_loss=attention_loss,
                     randomize=randomize
                 )
@@ -446,16 +568,16 @@ def nested_cross_validate(data, args, device,
 
         # --- Retrain on trainval, evaluate on test ---
         print("Retraining with best params...")
-        fold_metrics, history, attention_weights = retrain_and_evaluate(
+        fold_metrics, history, attention_weights, fuzzy_params = retrain_and_evaluate(
             data=data,
             args=args,
             device=device,
             trainval_idx=trainval_idx,
             test_idx=test_idx,
-            y_all=y_all,
             num_patients=num_patients,
             num_classes=num_classes,
             best_params=fold_best_params,
+            aggregator=aggregator,
             attention_loss=attention_loss,
             randomize=randomize,
         )
@@ -463,12 +585,13 @@ def nested_cross_validate(data, args, device,
         final_results[f"fold_{outer_fold}"] = {
             "metrics": fold_metrics,
             "history": history,
-            "best_params": best_params,
+            "best_params": fold_best_params,
         }
 
         if attention_weights is not None:
             attention_archive[f"fold_{outer_fold}"] = serialize_attention_weight(attention_weights)
 
         print(f"  Fold {outer_fold+1} test metrics: {fold_metrics}")
+        
 
-    return final_results, attention_archive
+    return final_results, attention_archive, fuzzy_params

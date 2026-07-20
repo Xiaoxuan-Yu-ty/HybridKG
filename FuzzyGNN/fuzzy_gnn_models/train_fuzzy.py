@@ -13,12 +13,6 @@ import numpy as np
 from tqdm import trange
 import sys
 
-# Add parent directory to path for imports
-try:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    base_dir = os.getcwd()
-sys.path.append(os.path.dirname(base_dir))
 from utils.graph_utils import (
     create_fuzzy_rules,
     load_graph,
@@ -27,9 +21,8 @@ from utils.graph_utils import (
     get_device,
     set_random_seeds
 )
-
-from fuzzy_models.fuzzy_models import get_fuzzy_model
-from models.baseline_models import get_baseline_model
+from FuzzyGNN.fuzzy_gnn_models.fuzzy_models import get_fuzzy_model
+from FuzzyGNN.gnn_models.baseline_models import get_baseline_model
 
 # Evaluation
 # ---------------------------------------------------------
