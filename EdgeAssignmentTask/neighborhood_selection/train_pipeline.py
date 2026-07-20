@@ -41,7 +41,7 @@ def parse():
                         help="Network construction strategy.")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/neighborhood_selection/results/aggregator")
+    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/neighborhood_selection/results/aggregator2")
     parser.add_argument('--dataset', type=str, default='adni', choices=['adni', 'geo'])
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     
@@ -58,7 +58,7 @@ def parse():
     # General Optimizer Settings
     parser.add_argument("--num_trial", type=int, default=100,
                          help="Number of trials for HPO process.")
-    parser.add_argument("--n_jobs", type=int, default=2, help="Number of jobs in Optuna HPO process.")
+    parser.add_argument("--n_jobs", type=int, default=1,help="Number of jobs in Optuna HPO process.")
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -158,7 +158,7 @@ def main():
             device=device,
             do_hpo=True,
             db_url=f"sqlite:///{final_output}/optuna.db",
-            attention_loss=True,
+            attention_loss=False,
             randomize=False,
             )
     

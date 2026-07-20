@@ -19,7 +19,7 @@ def parser():
     parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
 
     # graph generator args
-    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/hpo_kge/AD_KG", 
+    parser.add_argument("--output_dir", type=str, default="./CLEP_repeat/results/hpo_kge/", 
                         help="Directory to save generated networks.")
 
     # Argument for sample scoring
@@ -57,7 +57,7 @@ def main():
     args = parser()
     if args.cls_raw:
         # Load data
-        data = pd.read_csv(args.exp_path, index_col=0)
+        data = pd.read_csv(args.exp_path, index_col=0).T
         design = pd.read_csv(args.design, index_col=0, sep='\t')
         design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
         
@@ -66,48 +66,48 @@ def main():
 
         final_output = os.path.join(args.output_dir, 'raw')
         os.makedirs(final_output, exist_ok=True)
+    else:
+        # repeat CLEP classification, load embeddings
+        for threshold in [1.5, 5]:
+                
+            final_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}', args.kge_model)
+            os.makedirs(final_output, exist_ok=True)
+
+            design = pd.read_csv(args.design, index_col=0, sep='\t')
+            design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
+            # Create a mapping of the patient to the label. The patient id is converted to string to avoid duplicates
+            label_mapping = design['Target'].to_dict()
+
+            
+            embedding_path = f"./CLEP_repeat/results/hpo_kge/AD_KG/{args.scoring_type}_{threshold}/{args.kge_model}/embedding.csv"
+            embeddings = pd.read_csv(embedding_path, index_col=0)
+
+            embeddings = embeddings[embeddings.index.isin(design.index)]
+
+            for index in embeddings.index:
+                embeddings.at[index, 'label'] = label_mapping[index]
     
-    # repeat CLEP classification, load embeddings
-    for threshold in [1.5, 5]:
-            
-        final_output = os.path.join(args.output_dir,f'{args.scoring_type}_{threshold}', args.kge_model)
-        os.makedirs(final_output, exist_ok=True)
+    assert 'label' in embeddings.columns 
 
-        design = pd.read_csv(args.design, index_col=0, sep='\t')
-        design['Target'] = design['Old_Target'].map({"Control":0, "Disease":1})
-        # Create a mapping of the patient to the label. The patient id is converted to string to avoid duplicates
-        label_mapping = design['Target'].to_dict()
-
+    print("\n-------------Run Classification HPO---------------------------------------------")
+    for model_name in args.cls_model:
+        cls_output = os.path.join(final_output, 'cls_result', model_name)
+        os.makedirs(cls_output, exist_ok=True)
         
-        embedding_path = f"./CLEP_repeat/results/hpo_kge/AD_KG/{args.scoring_type}_{threshold}/{args.kge_model}/embedding.csv"
-        embeddings = pd.read_csv(embedding_path, index_col=0)
-
-        embeddings = embeddings[embeddings.index.isin(design.index)]
-
-        for index in embeddings.index:
-            embeddings.at[index, 'label'] = label_mapping[index]
+        db_url = f"sqlite:///{os.path.join(cls_output, 'optuna_study.db')}"
+        print(f"\n--- Running Classification HPO with model {model_name}---")
         
-        assert 'label' in embeddings.columns 
-   
-        print("\n-------------Run Classification HPO---------------------------------------------")
-        for model_name in args.cls_model:
-            cls_output = os.path.join(final_output, 'cls_result', model_name)
-            os.makedirs(cls_output, exist_ok=True)
-            
-            db_url = f"sqlite:///{os.path.join(cls_output, 'optuna_study.db')}"
-            print(f"\n--- Running Classification HPO with model {model_name}---")
-            
-            cv_results = do_classification(
-                data=embeddings,
-                model_name=model_name,
-                out_dir=cls_output,
-                validation_cv=5,
-                scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
-                rand_labels=False,
-                mysql_url=db_url,
-                num_processes=args.n_jobs,
-                num_trials=args.num_trials
-            )
+        cv_results = do_classification(
+            data=embeddings,
+            model_name=model_name,
+            out_dir=cls_output,
+            validation_cv=5,
+            scoring_metrics=['roc_auc', 'f1', 'f1_micro', 'f1_macro', 'f1_weighted', 'accuracy', 'average_precision'],
+            rand_labels=False,
+            mysql_url=db_url,
+            num_processes=args.n_jobs,
+            num_trials=args.num_trials
+        )
 
 if __name__=="__main__":
     main()
