@@ -26,7 +26,7 @@ for kg in "${DISEASE_KGS[@]}"; do
             echo "Running: KG=$kg | Dataset=$ds | Aggregator=$agg"
             echo "--------------------------------------------------------"
 
-            python -m EdgeAssignmentTask.neighborhood_selection.train_pipeline \
+            python -m EdgeAssignmentTask.gumbel_softmax.train_pipeline \
                 --DiseaseKG "$kg" \
                 --dataset "$ds" \
                 --aggregator "$agg" \
@@ -34,7 +34,7 @@ for kg in "${DISEASE_KGS[@]}"; do
                 --embedding_path "$embedding_path" \
                 --exp_path "$exp_path" \
                 --design "$design_path" \
-                --output_dir "./EdgeAssignmentTask/neighborhood_selection/results/label_homophily" \
+                --output_dir "./EdgeAssignmentTask/gumbel_softmax/results/no_label_homophily" \
                 --num_trial 20
 
 

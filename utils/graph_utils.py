@@ -51,23 +51,8 @@ def compute_topological_features(G):
     # Centrality measures
     # (1) a more forgivable way to compute eigenvector_centrality
     eigenvector_centrality = np.array(list(nx.eigenvector_centrality(G, weight='weight', max_iter=1000).values()))
-    
-    # (2) compute eigenvector_centrality of each component and then merge 
-    # eigen_cent = {}
-    # for c in nx.connected_components(G):
-    #     subgraph = G.subgraph(c)
-    #     if len(subgraph) > 1:
-    #         # Compute for this component
-    #         results = nx.eigenvector_centrality_numpy(subgraph, weight='weight')
-    #         eigen_cent.update(results)
-    #     else:
-    #         # Single isolated nodes have 0 centrality
-    #         node = list(subgraph.nodes())[0]
-    #         eigen_cent[node] = 0.0
-    # # Convert to array in the same order as G.nodes()
-    # eigenvector_centrality = np.array([eigen_cent.get(node, 0) for node in G.nodes()])
-    
-    # (3) origenal way to compute eigenvector_centrality, but require the graph to be a single connected component
+
+    # (2) origenal way to compute eigenvector_centrality, but require the graph to be a single connected component
     #eigenvector_centrality = np.array(list(nx.eigenvector_centrality_numpy(G, weight='weight').values()))
     degree_centrality = np.array(list(nx.degree_centrality(G).values()))
     

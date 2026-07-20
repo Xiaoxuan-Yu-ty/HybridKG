@@ -11,6 +11,12 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.data import HeteroData
 from tqdm import tqdm
 
+import os
+import json
+from typing import Optional
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
@@ -352,7 +358,7 @@ def compute_topological_features(G, node_type='Patient',label_homophily=False):
             d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
             d22 = list(d2)
             for neighbor in d2:
-                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient':
+                if neighbor == n or G.nodes()[neighbor].get('label')!= node_type:
                     d22.remove(neighbor)
             # print(d22)
             if d22:
@@ -492,3 +498,131 @@ def merge_patient_protein_edges(data):
     new_data[('Protein', 'rev_reg_control', 'Patient')].edge_index = torch.cat(rev_h_edges,dim=1,)
 
     return new_data
+
+
+def parse_cv_metrics(root_dir):
+    extracted_data = []
+    
+    # Recursively traverse the directory tree starting from aggregator2
+    for dirpath, _, filenames in os.walk(root_dir):
+        if "cv_metrics.json" in filenames:
+            # Get relative path to parse folder components
+            # Structure: dataset / kg / scoring_threshold / model_type
+            rel_path = os.path.relpath(dirpath, root_dir)
+            parts = rel_path.split(os.sep)
+            
+            # Ensure the path has the expected depth
+            if len(parts) >= 4:
+                dataset = parts[0]
+                kg = parts[1]
+                scoring_method = parts[2]
+                model_type = parts[3]
+                
+                file_path = os.path.join(dirpath, "cv_metrics.json")
+                try:
+                    with open(file_path, "r") as f:
+                        content = json.load(f)
+                        
+                        # Extract folds metrics
+                        folds = content.get("folds", {})
+                        for fold_name, fold_data in folds.items():
+                            metrics = fold_data.get("metrics", {})
+                            for metric_name, value in metrics.items():
+                                extracted_data.append({
+                                    "dataset": dataset,
+                                    "kg": kg,
+                                    "scoring_method": scoring_method,
+                                    "model_type": model_type,
+                                    "fold": fold_name,
+                                    "metric": metric_name,
+                                    "value": value
+                                })
+                except Exception as e:
+                    print(f"Error parsing {file_path}: {e}")
+                    
+    return pd.DataFrame(extracted_data)
+
+
+def plot_fold_metric_comparison(df, 
+                                metric_name:str='AUROC', 
+                                kg:Optional[str]='AD_KG', 
+                                scoring_method:Optional[str]='ecdf_5', 
+                                model_type:Optional[str]='attention',
+                                hue:str='model_type',):
+    """
+    Plots a box plot comparing fold metrics across datasets with selectable filters.
+    
+    Parameters:
+    - df: pandas DataFrame containing the extracted metrics.
+    - metric_name: str, the metric to plot (e.g., 'Accuracy', 'AUROC', 'F1_score', 'AUPRC').
+    - kg: str or None, filter by Knowledge Graph(s) (e.g., 'AD_KG', 'PPI'). If None, includes all.
+    - scoring_threshold: str or None, filter by threshold(s) (e.g., 'ecdf_2.5'). If None, includes all.
+    - model_type: str or None, filter by model type(s) (e.g., 'attention', 'fuzzy_attention'). If None, includes all.
+    """
+    # 1. Filter dataframe based on arguments
+    filtered_df = df[df["metric"] == metric_name].copy()
+    
+    if kg is not None:
+        kg_list = kg if isinstance(kg, list) else [kg]
+        filtered_df = filtered_df[filtered_df["kg"].isin(kg_list)]
+        
+    if scoring_method is not None:
+        scoring_method_list = scoring_method if isinstance(scoring_method, list) else [scoring_method]
+        filtered_df = filtered_df[filtered_df["scoring_method"].isin(scoring_method_list)]
+        
+    if model_type is not None:
+        model_type_list = model_type if isinstance(model_type, list) else [model_type]
+        filtered_df = filtered_df[filtered_df["model_type"].isin(model_type_list)]
+        
+    if filtered_df.empty:
+        print(f"No data available for {metric_name} with the given filters.")
+        return
+
+    # 2. Set up the visualization
+    plt.figure(figsize=(10, 6))
+    
+    # use boxplot to see the distribution of fold values across datasets/models
+    # hue can be used to distinguish model types if multiple are selected
+    sns.boxplot(
+        data=filtered_df,
+        x="dataset",
+        y="value",
+        hue=hue,
+        palette="Set2",
+        boxprops=dict(alpha=0.8)
+    )
+    
+    # Overlay individual fold points for transparency and clarity
+    sns.stripplot(
+        data=filtered_df,
+        x="dataset",
+        y="value",
+        hue=hue,
+        dodge=True,
+        color="black",
+        alpha=0.6,
+        jitter=True,
+        legend=False
+    )
+
+    # 3. Titles and Labels
+    filter_desc = []
+    if kg: filter_desc.append(f"KG: {', '.join(kg)}")
+    if scoring_method: filter_desc.append(f"Threshold: {', '.join(scoring_method)}")
+    if model_type:filter_desc.append(f"Model_Type: {', '.join(model_type)}")
+    subtitle = f" | ".join(filter_desc)
+    
+    plt.title(f"Fold Distribution of {metric_name}\n({subtitle})", fontsize=12, fontweight="bold")
+    plt.xlabel("Dataset", fontsize=11)
+    plt.ylabel(metric_name, fontsize=11)
+    
+    plt.legend(title=hue.upper(), bbox_to_anchor=(1.05, 1), loc="upper left")
+        
+    plt.grid(axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    
+    # Save and display
+    filename = f"boxplot_{metric_name}.png"
+    #plt.savefig(filename, dpi=300)
+    plt.show()
+    print(f"Plot saved successfully as '{filename}'")
