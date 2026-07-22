@@ -100,3 +100,6 @@ GateEmbeddingTask/__pycache__/HRGCNConv.cpython-311.pyc
 GateEmbeddingTask/__pycache__/
 EdgeAssignmentTask/neighborhood_selection/results
 EdgeAssignmentTask/gumbel_softmax/__pycache__/
+nesy_gnn.zip
+nesy_gnn/graphs/graph_meta.pkl
+nesy_gnn/graphs/patient_graph_anmerge.gpickle
