@@ -43,7 +43,7 @@ def parse():
                         help="Network construction strategy.")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/gumbel_softmax/results/fuzzy_features")
+    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/gumbel_softmax/results/train_topo")
     parser.add_argument('--dataset', type=str, default='adni')
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     
@@ -77,7 +77,8 @@ def parse():
 def main():
     args = parse()
     set_seed(seed=args.seed)
-    device = get_device()
+    # device = get_device()
+    device='cpu'
     print(f"Executing on hardware device: {device}")
 
     final_results = {}

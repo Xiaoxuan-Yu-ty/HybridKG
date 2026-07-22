@@ -324,9 +324,9 @@ def get_protein_degrees(graph_summary_path, mask):
 
 
     # calculate disease/control protein degrees only from training samples
-    mask = pd.Series(mask, index=df_graph_summary.index)
-    # train_df = df_graph_summary.loc[mask]
-    train_df = df_graph_summary
+    mask = pd.Series(mask.cpu(), index=df_graph_summary.index)
+    train_df = df_graph_summary.loc[mask]
+    #train_df = df_graph_summary
     
     control_graph_dict = train_df[train_df['label']==0]['ast_linked_nodes'].to_dict()
     disease_graph_dict = train_df[train_df['label']==1]['ast_linked_nodes'].to_dict()
@@ -383,6 +383,11 @@ def compute_topological_features(G, graph_summary_path, mask, label_homophily=Fa
     all_degree_centrality = nx.degree_centrality(G)
     degree_centrality = np.array([all_degree_centrality[node] for node in sample_nodes])
 
+    df_graph_summary = pd.read_csv(graph_summary_path, index_col=0)
+    mask = pd.Series(mask, index=df_graph_summary.index)
+    train_df = df_graph_summary.loc[mask]
+    train_nodes = list(train_df.index)
+
     for sample in sample_nodes:
         # Get all protein neighbors for this sample
         neighbors = list(G.neighbors(sample))
@@ -436,7 +441,7 @@ def compute_topological_features(G, graph_summary_path, mask, label_homophily=Fa
             d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
             d22 = list(d2)
             for neighbor in d2:
-                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient':
+                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient' or neighbor not in train_nodes:
                     d22.remove(neighbor)
             # print(d22)
             if d22:

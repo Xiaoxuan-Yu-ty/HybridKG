@@ -261,7 +261,7 @@ def run_inner_hpo(
         epochs = trial.suggest_categorical(
                                                 "epochs",
                                                 # [1,2,3],
-                                                [75, 100, 125, 150]
+                                                [75, 100, 150,200, 500]
                                             )
         tau=trial.suggest_categorical("tau", [0.1, 0.4, 0.7, 1])
                                                     

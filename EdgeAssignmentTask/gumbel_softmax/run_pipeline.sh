@@ -34,7 +34,7 @@ for kg in "${DISEASE_KGS[@]}"; do
                 --embedding_path "$embedding_path" \
                 --exp_path "$exp_path" \
                 --design "$design_path" \
-                --output_dir "./EdgeAssignmentTask/gumbel_softmax/results/no_label_homophily" \
+                --output_dir "./EdgeAssignmentTask/gumbel_softmax/results/train_topo" \
                 --num_trial 60 \
                 --hpo
 
