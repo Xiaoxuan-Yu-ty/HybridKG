@@ -1,3 +1,4 @@
+import ast
 import pickle
 import random
 import re
@@ -302,55 +303,132 @@ class PatientProteinNetworkGenerator():
         
         return G, summary_df
 
+def get_common_proteins(sample_protein_dict:dict):
+    
+    disease_proteins = {}
+    for pr_list in sample_protein_dict.values():
+        for pr in pr_list:
+            if pr not in disease_proteins:
+                disease_proteins[pr]=1
+            else:
+                disease_proteins[pr]+=1
 
-def compute_topological_features(G, node_type='Patient',label_homophily=False):
+    disease_proteins = dict(sorted(disease_proteins.items(), key=lambda x: x[1], reverse=True))
+
+    return disease_proteins
+
+def get_protein_degrees(graph_summary_path, mask):
+    df_graph_summary = pd.read_csv(graph_summary_path, index_col=0)
+    df_graph_summary['ast_linked_nodes'] = df_graph_summary['pos_linked_nodes'].apply(ast.literal_eval) + df_graph_summary['neg_linked_nodes'].apply(ast.literal_eval)
+    all_proteins_degree = get_common_proteins(df_graph_summary['ast_linked_nodes'].to_dict())
+
+
+    # calculate disease/control protein degrees only from training samples
+    mask = pd.Series(mask, index=df_graph_summary.index)
+    # train_df = df_graph_summary.loc[mask]
+    train_df = df_graph_summary
+    
+    control_graph_dict = train_df[train_df['label']==0]['ast_linked_nodes'].to_dict()
+    disease_graph_dict = train_df[train_df['label']==1]['ast_linked_nodes'].to_dict()
+
+    control_proteins_degree = get_common_proteins(control_graph_dict)
+    disease_proteins_degree = get_common_proteins(disease_graph_dict)
+
+    # compute disease/control sample numbers
+    total_disease_samples = len(train_df[train_df['label']==1])
+    total_control_samples = len(train_df[train_df['label']==0])
+    # compute weighted adjacency vector for samples
+    protein_weights = {}
+    for p in all_proteins_degree:
+        d_count = disease_proteins_degree.get(p,0)
+        c_count = control_proteins_degree.get(p,0)
+
+        freq_d = (d_count + 1) / (total_disease_samples + 1)
+        freq_c = (c_count + 1) / (total_control_samples + 1)
+        protein_weights[p] = freq_d/freq_c
+
+    return all_proteins_degree, control_proteins_degree, disease_proteins_degree, protein_weights
+
+def compute_topological_features(G, graph_summary_path, mask, label_homophily=False):
     """
     Compute topological features for patient nodes in the graph.
     
     Args:
         G: NetworkX graph object
+        graph_summary_path:str
+        mask:list|np.array|tensor
+        node_type:str
+        label_homophily:bool
         
     Returns:
         dict: Dictionary containing topological features for each node
     """
     print("Computing topological features...")
     
-    nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')==node_type]
-    degrees = np.array([G.degree(n) for n in nodes])
+    all_proteins_degree, control_proteins_degree, disease_proteins_degree, protein_weights = get_protein_degrees(graph_summary_path, mask)
+    
+    top_50_disease_proteins = list(disease_proteins_degree.keys())[:50]
+    
+    # compute features
+    degrees = []
+    mean_neighbor_degree = []
+    max_neighbor_degree = []
+    min_neighbor_degree = []
+    disease_hub_overlap_score = []
+    dcs=[]
+    avg_protein_weights = []
 
-    avg_neighbor_degrees = nx.average_neighbor_degree(G)
-    mean_neighbor_degrees = np.array([avg_neighbor_degrees[n] for n in nodes])
-    
-    labels = [G.nodes[node].get('y') for node in nodes]
-    
+    sample_nodes = nodes = [node for node,attr in G.nodes(data=True) if attr.get('label')=='Patient']
     # Centrality measures
     all_degree_centrality = nx.degree_centrality(G)
-    degree_centrality = np.array([all_degree_centrality[node] for node in nodes])
-    
-    # Average edge weight
-    avg_edge_weight = []
-    for n in nodes:
-        if G.degree(n) > 0:
-            neibor_weights = []
-            for m in G.neighbors(n):
-                edge_data_dict = G[n][m] 
-                # edge_data_dict looks like: {0: {'weight': 0.1, ...}, 1: {'weight': 0.5, ...}}
-                for edge_key, attributes in edge_data_dict.items():
-                    weight = attributes.get('weight', 0)
-                    neibor_weights.append(weight)
-                    #print(weight)
-            avg_edge_weight.append(np.mean(neibor_weights))
-        else:
-            avg_edge_weight.append(0.0)
-    avg_edge_weight = np.array(avg_edge_weight)
-    
-    features = {
-            'degrees': degrees,
-            'avg_neighborhood_degrees':mean_neighbor_degrees,
-            'degree_centrality': degree_centrality,
-            'avg_edge_weight': avg_edge_weight
-        }
+    degree_centrality = np.array([all_degree_centrality[node] for node in sample_nodes])
 
+    for sample in sample_nodes:
+        # Get all protein neighbors for this sample
+        neighbors = list(G.neighbors(sample))
+        degrees.append(len(neighbors))
+        
+        # Extract the pre-calculated degrees of the connected protein neighbors
+        neighbor_degrees = [all_proteins_degree.get(p, 0) for p in neighbors]
+        #print(neighbor_degrees)
+        
+        # mean_neighbor_degree
+        mean_deg = np.mean(neighbor_degrees)
+        mean_neighbor_degree.append(mean_deg)
+        
+        # max_neighbor_degree
+        max_deg = np.max(neighbor_degrees)
+        max_neighbor_degree.append(max_deg)
+
+        # min_neighbor_degree
+        min_deg = np.min(neighbor_degrees)
+        min_neighbor_degree.append(min_deg)
+        
+        # Disease Hub Overlap Score
+        overlap_count = sum(1 for p in neighbors if p in top_50_disease_proteins)
+        overlap_score = overlap_count / len(neighbors)
+        disease_hub_overlap_score.append(overlap_score)
+        #print(overlap_score)
+
+        # compute DCS(Differential Connectivity Score)
+        fd = np.sum([disease_proteins_degree.get(p,0) for p in neighbors])
+        fc = np.sum([control_proteins_degree.get(p,0) for p in neighbors])
+        dcs.append(fd-fc)
+
+        # average protein frequency ratio weight
+        pr_weight = np.average([protein_weights.get(p,0) for p in neighbors])
+        avg_protein_weights.append(pr_weight)
+
+    features = {
+            'degrees': np.array(degrees),
+            'mean_neighborhood_degrees':np.array(mean_neighbor_degree),
+            'max_neighborhood_degrees':np.array(max_neighbor_degree),
+            'min_neighborhood_degrees':np.array(min_neighbor_degree),
+            'disease_hub_overlap_score':np.array(disease_hub_overlap_score),
+            'differential_connectivity_score':np.array(dcs),
+            'avg_protein_disease_ratio':np.array(avg_protein_weights),
+        }
+    
     # Two-hop agreement
     if label_homophily:
         two_hop_agreement = []
@@ -358,7 +436,7 @@ def compute_topological_features(G, node_type='Patient',label_homophily=False):
             d2 = set(nx.single_source_shortest_path_length(G, n, cutoff=2).keys())
             d22 = list(d2)
             for neighbor in d2:
-                if neighbor == n or G.nodes()[neighbor].get('label')!= node_type:
+                if neighbor == n or G.nodes()[neighbor].get('label')!= 'Patient':
                     d22.remove(neighbor)
             # print(d22)
             if d22:
@@ -367,19 +445,11 @@ def compute_topological_features(G, node_type='Patient',label_homophily=False):
             else:
                 two_hop_agreement.append(0.0)
         two_hop_agreement = np.array(two_hop_agreement)
+        features = features | {'two_hop_agreement': two_hop_agreement}
 
-        features = {
-            'degrees': degrees,
-            'avg_neighborhood_degrees':mean_neighbor_degrees,
-            'two_hop_agreement': two_hop_agreement,
-            'degree_centrality': degree_centrality,
-            'avg_edge_weight': avg_edge_weight
-        }
-    
     return features
 
-
-def paprnetwork_to_hetero_data(G: nx.MultiDiGraph, topo_features=True, label_homophily=True):
+def paprnetwork_to_hetero_data(G: nx.MultiDiGraph):
     """
     Converts the Patient-Protein network into a PyTorch Geometric HeteroData object.
     .
@@ -410,13 +480,6 @@ def paprnetwork_to_hetero_data(G: nx.MultiDiGraph, topo_features=True, label_hom
         data[n_type].x = x
         data[n_type].y = torch.tensor([G.nodes[nid]['y'] for nid in n_ids], dtype=torch.long)
 
-        if topo_features:
-            nt_topo_features = compute_topological_features(G, node_type=n_type,label_homophily=label_homophily)
-
-            nt_topo = np.vstack([nt_topo_features[name] for name in nt_topo_features.keys()]).T
-            data[n_type].topo_features = torch.tensor(nt_topo,dtype=torch.float)
-
-        
     # 3. Process Edges
     edges_dict = {}
     for u, v, r, attrs in G.edges(keys=True, data=True):

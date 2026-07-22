@@ -8,7 +8,9 @@ import torch
 from EdgeAssignmentTask.gumbel_softmax.train import (nested_cross_validate,
                                                     retrain_and_evaluate)
 from EdgeAssignmentTask.neighborhood_selection.train_utils import (get_protein_embeddings,
-                                                                   PatientProteinNetworkGenerator, merge_patient_protein_edges,
+                                                                   PatientProteinNetworkGenerator, 
+                                                                   merge_patient_protein_edges,
+                                                                   compute_topological_features,
                                                                    paprnetwork_to_hetero_data,
                                                                    build_data_dict,
                                                                    load_graph,
@@ -41,12 +43,12 @@ def parse():
                         help="Network construction strategy.")
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/neighborhood_selection/results/aggregator3")
+    parser.add_argument("--output_dir", type=str, default="./EdgeAssignmentTask/gumbel_softmax/results/fuzzy_features")
     parser.add_argument('--dataset', type=str, default='adni')
     parser.add_argument('--scoring', type=str, default='ecdf', choices=['ecdf', 'std', 'logfc'])
     
     # Model parameters
-    parser.add_argument("--aggregator", type=str, choices=['attention', 'fuzzy_attention'],
+    parser.add_argument("--aggregator", type=str, default='fuzzy_attention2',
                         help="Model Name of PatientAggregator")
     parser.add_argument("--hpo", action="store_true", help="Enable HPO Process")
     parser.add_argument("--hidden_channels", type=int, default=256)
@@ -58,17 +60,13 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=100,
+    parser.add_argument("--num_trial", type=int, default=60,
                          help="Number of trials for HPO process.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of jobs in Optuna HPO process.")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--tau", type=float,default=0.5)
-    parser.add_argument("--negative_sampling_ratio", type=float, default=0.1)
-    parser.add_argument("--num_negatives", type=int, default=100)
-    parser.add_argument("--pos_sample_cap", type=int, default=100)
-
 
     # Hardware & Seeding
     parser.add_argument("--seed", type=int, default=42)
@@ -107,7 +105,6 @@ def main():
 
     # 3. sample scoring
     for threshold in [5]:
-
         # Output dir
         network_output = os.path.join(args.output_dir, args.dataset, args.DiseaseKG,
                                     f'{args.scoring}_{threshold}')
@@ -120,6 +117,7 @@ def main():
             print(f"\n[INFO] Loading existing graph from {graph_checkpoint}")
             with open(graph_checkpoint, "rb") as f:
                 G=pickle.load(f)
+            graph_summary_path = os.path.join(network_output, f"Summary_{args.dataset}_Protein.csv")
         else:
         
             method_map = {
@@ -153,17 +151,13 @@ def main():
                                         )
             # save summary network
             save_network = os.path.join(network_output, f"G_{args.dataset}_Protein.pkl")
-            save_summary = os.path.join(network_output, f"Summary_{args.dataset}_Protein.csv")
+            graph_summary_path = os.path.join(network_output, f"Summary_{args.dataset}_Protein.csv")
         
             save_graph(G, save_network)
-            summary_df.to_csv(save_summary)
+            summary_df.to_csv(graph_summary_path)
 
         # 5. convert to HeteroData
-        initial_data, node_mappings = paprnetwork_to_hetero_data(
-            G=G, 
-            topo_features=True, 
-            label_homophily=False,
-            )
+        initial_data, node_mappings = paprnetwork_to_hetero_data(G=G)
         # merge edge_types
         new_data = merge_patient_protein_edges(initial_data)
         # build data features: x_dict, edge_index_dict
@@ -175,6 +169,9 @@ def main():
         if args.hpo:
             final_results, attention_archive, fuzzy_params = nested_cross_validate(
             data=data,
+            G=G,
+            graph_summary_path=graph_summary_path,
+            label_homophily=False,
             args=args,
             device=device,
             aggregator=args.aggregator,
@@ -196,9 +193,6 @@ def main():
                 "heads": args.heads,
                 "negative_slope": 0.2,
                 "aggr": 'sum',
-                "negative_sampling_ratio": 1,
-                "num_negatives": 500,
-                "pos_sample_cap": 100,
                 "lr":args.lr,
                 "weight_decay":args.weight_decay,
                 "epochs":args.epochs,
@@ -207,6 +201,9 @@ def main():
             
             final_results, attention_archive, fuzzy_params = nested_cross_validate(
             data=data,
+            G=G,
+            graph_summary_path=graph_summary_path,
+            label_homophily=False,
             args=args,
             device=device,
             aggregator=args.aggregator,

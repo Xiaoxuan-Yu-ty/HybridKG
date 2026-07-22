@@ -542,7 +542,7 @@ class FuzzyAggregator(nn.Module):
         beta=torch.tensor(layer_att['Patient']['attention'])
     
         if topo_features is not None:
-            topo_features = torch.cat([topo_features, beta], dim=-1)
+            #topo_features = torch.cat([topo_features, beta], dim=-1)
             r = self.fuzzy_layer(topo_features)
             e = self.rule_proj(r) # project topo features to hidden space
             g = torch.sigmoid(self.rule_gate(torch.cat([h_fused, e], dim=1)))

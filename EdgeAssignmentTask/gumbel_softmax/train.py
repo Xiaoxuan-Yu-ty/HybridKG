@@ -25,6 +25,7 @@ from sklearn.metrics import (
     average_precision_score
 )
 
+from EdgeAssignmentTask.neighborhood_selection.train_utils import compute_topological_features
 from GateEmbeddingTask.train_utils import (
     set_seed,
 )
@@ -153,10 +154,11 @@ def train(
         scheduler.step()
 
         # Evaluate
-        # val_metrics, _ = evaluate_cls(
+        # val_metrics, _,_ = evaluate_cls(
         #     model=model, 
         #     data=data, 
-        #     mask_name=val_mask_name,
+        #     mask_name='val_mask',
+        #     tau=tau,
         #     randomize=randomize)
         
         # score = val_metrics[metric]
@@ -164,20 +166,9 @@ def train(
         history[epoch] = {
             'cls_loss': float(cls_loss.detach()),
             'att_loss': float(att_loss.detach()),
-            # 'val_metrics': val_metrics,
+            #'val_metrics': val_metrics,
         }
 
-    #     if score > best_composite:
-    #         best_composite = score
-    #         best_state = {
-    #             k: v.detach().cpu().clone()
-    #             for k, v in model.state_dict().items()
-    #         }
-
-    # if best_state is not None:
-    #     model.load_state_dict(best_state)
-
-    # print(f"Best {metric} on validation set: {best_composite:.4f}")
     return model, history
 
 @torch.no_grad()
@@ -236,6 +227,9 @@ def evaluate_cls(model, data, mask_name, tau, randomize=True,):
 
 def run_inner_hpo(
     db_url,
+    G,
+    graph_summary_path,
+    label_homophily,
     data,
     args,
     device,
@@ -287,6 +281,15 @@ def run_inner_hpo(
         data['Patient'].val_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
         data['Patient'].val_mask[val_abs] = True
 
+        nt_topo_features = compute_topological_features(G=G, 
+                                                        graph_summary_path=graph_summary_path, 
+                                                        mask=data['Patient'].train_mask, 
+                                                        label_homophily=label_homophily)
+        
+        nt_topo = np.vstack([nt_topo_features[name] for name in nt_topo_features.keys()]).T
+        data['Patient'].topo_features = torch.tensor(nt_topo,dtype=torch.float)
+
+
         if aggregator == 'attention':
             model = AttentionAggregator(data=data,
                                     hidden_channels=hidden_channels,
@@ -295,7 +298,7 @@ def run_inner_hpo(
                                     num_classes=num_classes,
                                     dropout_rate=dropout_rate
                                     )
-        elif aggregator == 'fuzzy_attention':
+        else:
             model = FuzzyAggregator(data=data,
                                     hidden_channels=hidden_channels,
                                     att_channels=att_channels,
@@ -303,10 +306,10 @@ def run_inner_hpo(
                                     num_classes=num_classes,
                                     dropout_rate=dropout_rate,
                                     # num rules = num_topo_features + num_edge_types
-                                    num_rules=data['Patient'].topo_features.size(1) + 2,
+                                    num_rules=data['Patient'].topo_features.size(1),
                                     )
-        else:
-            raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
+        # else:
+        #     raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
         
         model.to(device)
         optimizer = torch.optim.AdamW(
@@ -386,7 +389,9 @@ def run_inner_hpo(
 
 def retrain_and_evaluate(
     data,
-    args,
+    G,
+    graph_summary_path,
+    label_homophily,
     device,
     trainval_idx,
     test_idx,
@@ -408,6 +413,14 @@ def retrain_and_evaluate(
     data['Patient'].test_mask = torch.zeros(num_patients, dtype=torch.bool, device=device)
     data['Patient'].test_mask[test_idx] = True
 
+    nt_topo_features = compute_topological_features(G=G, 
+                                                        graph_summary_path=graph_summary_path, 
+                                                        mask=data['Patient'].train_mask, 
+                                                        label_homophily=label_homophily)
+        
+    nt_topo = np.vstack([nt_topo_features[name] for name in nt_topo_features.keys()]).T
+    data['Patient'].topo_features = torch.tensor(nt_topo,dtype=torch.float)
+
     if aggregator == 'attention':
         model = AttentionAggregator(data=data,
                                 hidden_channels=best_params['hidden_channels'],
@@ -416,17 +429,17 @@ def retrain_and_evaluate(
                                 num_classes=num_classes,
                                 dropout_rate=best_params['dropout_rate']
                                 )
-    elif aggregator == 'fuzzy_attention':
+    else:
         model = FuzzyAggregator(data=data,
                                 hidden_channels=best_params['hidden_channels'],
                                 att_channels=best_params['att_channels'],
                             #   out_channels=best_params['out_channels'],
-                                num_rules=data['Patient'].topo_features.size(1)+2,
+                                num_rules=data['Patient'].topo_features.size(1),
                                 num_classes=num_classes,
                                 dropout_rate=best_params['dropout_rate']
                                 )
-    else:
-        raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
+    # else:
+    #     raise RuntimeError("Expected aggregator in [attention, fuzzy_attention]")
     
     model.to(device)
     optimizer = torch.optim.AdamW(
@@ -467,8 +480,13 @@ def retrain_and_evaluate(
         torch.cuda.empty_cache()
 
 
-def nested_cross_validate(data, args, device, 
+def nested_cross_validate(data, 
+                          G,
+                          graph_summary_path,
+                          args, 
+                          device, 
                           aggregator:str,
+                          label_homophily=False,
                           db_url=None, 
                           best_params=None, 
                           do_hpo=True, 
@@ -505,6 +523,9 @@ def nested_cross_validate(data, args, device,
                 fold_best_params = run_inner_hpo(
                     db_url=db_url,
                     data=data,
+                    G=G,
+                    graph_summary_path=graph_summary_path,
+                    label_homophily=label_homophily,
                     args=args,
                     device=device,
                     trainval_idx=trainval_idx,
@@ -524,7 +545,9 @@ def nested_cross_validate(data, args, device,
         print("Retraining with best params...")
         fold_metrics, history, attention_weights, fuzzy_params = retrain_and_evaluate(
             data=data,
-            args=args,
+            G=G,
+            graph_summary_path=graph_summary_path,
+            label_homophily=label_homophily,
             device=device,
             trainval_idx=trainval_idx,
             test_idx=test_idx,
