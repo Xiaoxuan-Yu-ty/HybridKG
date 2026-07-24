@@ -185,7 +185,7 @@ def _extract_direct_gene_ad_rules(
         for ad_node in ad_nodes:
             if not DG.has_node(ad_node):
                 continue
-            # Direct edge
+            # Direct edge (gene -> AD)
             if DG.has_edge(gene_node, ad_node):
                 sign = DG[gene_node][ad_node].get("sign", 0)
                 rel  = DG[gene_node][ad_node].get("rel", "")
@@ -211,9 +211,10 @@ def _extract_direct_gene_ad_rules(
 
             # 1-hop via intermediate (gene → X → AD)
             for mid in DG.predecessors(ad_node) if False else DG.successors(gene_node):
+                # the above condition always find the X in (gene -> X)
                 if mid == ad_node:
                     continue
-                if DG.has_edge(mid, ad_node):
+                if DG.has_edge(mid, ad_node): # now to find the X in (gene → X → AD)
                     s1 = DG[gene_node][mid].get("sign", 0) if DG.has_edge(gene_node, mid) else 0
                     s2 = DG[mid][ad_node].get("sign", 0)
                     if s1 == 0 or s2 == 0:
@@ -296,10 +297,13 @@ def _extract_pathway_rules(
 def _extract_pathway_rules_from_kg(
     DG: nx.DiGraph, gene_node_map: dict
 ) -> List[KGRule]:
-    """Fallback: build pathway rules directly from KG edges."""
+    """Fallback: build pathway rules directly from KG edges.
+        (gene -> BP -> AD)
+    """
     rules = []
     seen_bps = set()
 
+    # get the AD directly related BiologicalProecess nodes
     bp_nodes = [n for n in DG.nodes() if _is_bp_node(n) and _is_ad_bp(n)]
 
     for bp_node in bp_nodes:
@@ -319,7 +323,8 @@ def _extract_pathway_rules_from_kg(
 
         if len(gene_signs) < 2:
             continue
-
+        
+        # get the number of genes activate/supress this BiologicalProcess
         activators = [g for g, s in gene_signs.items() if s > 0]
         repressors = [g for g, s in gene_signs.items() if s < 0]
 
@@ -352,7 +357,7 @@ def _extract_causal_chain_rules(
     DG: nx.DiGraph, gene_node_map: dict, ad_nodes: set,
     max_chain_length: int,
 ) -> List[KGRule]:
-    """Find multi-hop gene → ... → AD pathology paths."""
+    """Find multi-hop (gene → ... → AD) pathology paths.sign > 0 if multiply_all_signs >0 """
     rules = []
     seen = set()
 
@@ -418,8 +423,10 @@ class KGRuleEngine:
     def fit(self, ecdf_df: pd.DataFrame, ctl_ids: List[str]):
         """Learn CTL baseline per gene from eCDF scores."""
         ctl_data = ecdf_df[ctl_ids] if set(ctl_ids) <= set(ecdf_df.columns) else ecdf_df
-        self.ctl_mean_ = ctl_data.mean(axis=1).to_dict()
-        self.ctl_std_  = (ctl_data.std(axis=1) + 1e-8).to_dict()
+
+        # calculate each gene's mean and std in control ecdf_df
+        self.ctl_mean_ = {str(k): float(v) for k, v in ctl_data.mean(axis=1).to_dict().items()}
+        self.ctl_std_ = {str(k): float(v) for k, v in (ctl_data.std(axis=1) + 1e-8).to_dict().items()}
         return self
 
     def evaluate_patient(
@@ -435,14 +442,14 @@ class KGRuleEngine:
         threshold_val = self.threshold_std * 0.1   # e.g. 1.0 → 0.10, 2.0 → 0.20
 
         fired = []
-        scores_upper = {g.upper(): v for g, v in ecdf_scores.items()}
+        scores_upper = {str(g).upper(): v for g, v in ecdf_scores.items()}
 
         for rule in self.rules:
             gene_scores = {}
             condition_met_count = 0
 
             for gene, sign in zip(rule.genes, rule.signs):
-                gene_u = gene.upper()
+                gene_u = str(gene).upper()
                 if gene_u not in scores_upper:
                     continue
                 score = scores_upper[gene_u]
@@ -460,9 +467,9 @@ class KGRuleEngine:
 
             frac  = condition_met_count / len(gene_scores)
             agg   = float(np.mean([
-                gene_scores[g.upper()] * s
+                gene_scores[str(g).upper()] * s
                 for g, s in zip(rule.genes, rule.signs)
-                if g.upper() in gene_scores
+                if str(g).upper() in gene_scores
             ]))
             fires = frac >= 0.5
 

@@ -57,7 +57,7 @@ def compute_kg_rule_scores(log2fc_df, rules, threshold=THRESHOLD):
                 signals.append(log2fc_df.loc[g] * sign)
         if not signals:
             continue
-        avg = pd.concat(signals, axis=1).mean(axis=1)
+        avg = pd.concat(signals, axis=1).mean(axis=1) # ? does the signals list contain rule_scores for all patients?
         scores[rule.name] = avg.values
 
     if not scores:
