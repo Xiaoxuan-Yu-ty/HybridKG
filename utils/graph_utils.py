@@ -69,7 +69,7 @@ def compute_topological_features(G):
     return {
         'degrees': degrees,
         'clustering': clustering,
-        'two_hop_agreement': two_hop_agreement,
+        #'two_hop_agreement': two_hop_agreement,
         'eigenvector_centrality': eigenvector_centrality,
         'degree_centrality': degree_centrality,
         'avg_edge_weight': avg_edge_weight

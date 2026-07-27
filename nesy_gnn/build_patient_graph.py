@@ -15,13 +15,6 @@ import pandas as pd
 import networkx as nx
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
-
-ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(ROOT, 'data')
-OUT_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphs')
-os.makedirs(OUT_DIR, exist_ok=True)
-
-sys.path.insert(0, os.path.join(ROOT, 'nesy_pipeline'))
 from rule_engine import extract_rules
 
 KG_PATH   = os.path.join(ROOT, 'KG', 'ad_network_with_reverse_edges.pkl')
@@ -35,6 +28,18 @@ THRESHOLD    = 0.10    # log2FC threshold for rule activation
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def compute_log2fc(expression_df, ctl_ids):
+    """Without statistical testing of whether disease_group and control_group gene expression
+       significantly or not. Simply calculate a continous logfc score for each patient's each gene
+       expression: 
+       logfc[gene,patient] = log2fc_gene_expression[gene,patient] - log2fc_gene_expression[gene,control_median]
+
+    Args:
+        expression_df (pd.DataFrame): [genes, sample_ids]
+        ctl_ids (list): _description_
+
+    Returns:
+        np.array: _description_
+    """
     ctl_cols   = [c for c in ctl_ids if c in expression_df.columns]
     ctl_median = expression_df[ctl_cols].median(axis=1)
     return np.log2(expression_df + 1).subtract(np.log2(ctl_median + 1), axis=0)
@@ -42,6 +47,7 @@ def compute_log2fc(expression_df, ctl_ids):
 
 def compute_kg_rule_scores(log2fc_df, rules, threshold=THRESHOLD):
     """Compute continuous KG rule activation score per patient per rule.
+       Transform GE data to KGRule scores
 
     Score = mean(sign_g * log2fc[g]) for genes in the rule.
     Positive score means the rule's causal direction is supported.
@@ -57,7 +63,7 @@ def compute_kg_rule_scores(log2fc_df, rules, threshold=THRESHOLD):
                 signals.append(log2fc_df.loc[g] * sign)
         if not signals:
             continue
-        avg = pd.concat(signals, axis=1).mean(axis=1) # ? does the signals list contain rule_scores for all patients?
+        avg = pd.concat(signals, axis=1).mean(axis=1) #signals list contain rule_scores for all patients
         scores[rule.name] = avg.values
 
     if not scores:
