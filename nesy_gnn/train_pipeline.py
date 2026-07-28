@@ -93,7 +93,12 @@ def main():
 
     # 1. Build patient graph and convert to PyG Data
     exp_df = pd.read_csv(args.exp_path, index_col=0)
-    design_df = pd.read_csv(args.design, index_col=0)
+    try:
+        design_df = pd.read_csv(args.design, index_col=0)
+        design_df['Target'] = design_df['Target'].map({'Disease':'Disease','Control':'Control'})
+    except:
+        design_df = pd.read_csv(args.design, sep='\t', index_col=0)
+        design_df['Target'] = design_df['Old_Target'].map({'Disease':'Disease','Control':'Control'})
 
     G, meta = build_patient_graph(
         kg_path=args.kg_path,

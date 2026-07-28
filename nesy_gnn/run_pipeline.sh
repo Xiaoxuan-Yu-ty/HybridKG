@@ -4,8 +4,8 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("ANMerge" "ADNI" "GEO")
-K_VALUES=(4 8 12 16 20)
+DATASETS=("ADNI" "ANMerge" "GEO")
+K_VALUES=(8)
 MODELS=("GAT" "GCN" "GIN")
 
 # Base directory for outputs
@@ -22,7 +22,7 @@ for dataset in "${DATASETS[@]}"; do
         DESIGN_PATH="./data/ANMerge/design_2cls_3cl_target.csv"
     elif [ "$dataset" == "ADNI" ]; then
         EXP_PATH="./data/ADNI/adni_gene_cleaned.csv"
-        DESIGN_PATH="./data/ADNI/adni_exp_2cls.csv"
+        DESIGN_PATH="./data/ADNI/design_with_real_target.tsv"
     elif [ "$dataset" == "GEO" ]; then
         EXP_PATH="./data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv"
         DESIGN_PATH="./data/GEO/GSE33000_ad_hd/GSE33000_meta_2cls.csv"
@@ -41,7 +41,7 @@ for dataset in "${DATASETS[@]}"; do
             echo "  Model Type : $model"
             echo "========================================================"
 
-            python train_pipeline.py \
+            python -m nesy_gnn.train_pipeline \
                 --KG "$KG_NAME" \
                 --kg_path "$KG_PATH" \
                 --exp_path "$EXP_PATH" \
@@ -51,10 +51,10 @@ for dataset in "${DATASETS[@]}"; do
                 --dataset "$dataset" \
                 --model_type "$model" \
                 --use_kg \
-                --num_trial 10 \
+                --num_trial 1 \
                 --n_jobs 1 \
                 --n_splits 3 \
-                --epochs 50 \
+                --epochs 5 \
                 --seed 42
 
             echo "Finished execution for Dataset=$dataset, k=$k, Model=$model"
