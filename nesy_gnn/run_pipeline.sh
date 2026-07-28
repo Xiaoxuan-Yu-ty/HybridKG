@@ -4,8 +4,8 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("ANMerge") #"ADNI" "GEO")
-K_VALUES=(8 12 16 20)
+DATASETS=("ADNI" "AdNeuralMed" "ANMerge")
+K_VALUES=(4 8 12 16 20)
 MODELS=("GAT" "GCN" "GIN")
 
 # Base directory for outputs
@@ -23,6 +23,9 @@ for dataset in "${DATASETS[@]}"; do
     elif [ "$dataset" == "ADNI" ]; then
         EXP_PATH="./data/ADNI/adni_gene_cleaned.csv"
         DESIGN_PATH="./data/ADNI/design_with_real_target.tsv"
+    elif [ "$dataset" == "AdNeuralMed" ]; then
+        EXP_PATH="./data/AdNeuralMed/allbatches_expression_mean.csv"
+        DESIGN_PATH="./data/AdNeuralMed/allbatches_metadata_cleaned.csv"
     elif [ "$dataset" == "GEO" ]; then
         EXP_PATH="./data/GEO/GSE33000_ad_hd/GSE33000_exp_2cls.csv"
         DESIGN_PATH="./data/GEO/GSE33000_ad_hd/GSE33000_meta_2cls.csv"
@@ -51,10 +54,10 @@ for dataset in "${DATASETS[@]}"; do
                 --dataset "$dataset" \
                 --model_type "$model" \
                 --use_kg \
-                --num_trial 100 \
+                --num_trial 1 \
                 --n_jobs 1 \
                 --n_splits 3 \
-                --epochs 200 \
+                --epochs 2 \
                 --seed 42
 
             echo "Finished execution for Dataset=$dataset, k=$k, Model=$model"

@@ -133,6 +133,15 @@ def compute_topological_features(G):
         'avg_edge_weight': avg_edge_weight
     }
 
+import os
+import pickle
+import json
+import networkx as nx
+import numpy as np
+import pandas as pd
+from sklearn.neighbors import NearestNeighbors
+from tqdm import tqdm
+
 def get_patient_features(
     kg_path: str, 
     exp_df: pd.DataFrame, 
@@ -163,6 +172,7 @@ def get_patient_features(
             - kg_scores_direct_df (pd.DataFrame): DataFrame containing direct rule scores.
     """
     # 1. Extract rules from KG
+    exp_df = exp_df.T if exp_df.shape[0] > exp_df.shape[1] else exp_df
     expr_genes = set(exp_df.columns)
     rules = extract_rules(
         kg_path=kg_path, 
@@ -174,6 +184,7 @@ def get_patient_features(
 
     # 2. Prepare log2fc_df to get features for building patient graph
     exp = exp_df.T if exp_df.shape[0] < exp_df.shape[1] else exp_df
+    
     logfc_df = compute_log2fc(exp, ctl_ids)
 
     # Prepare features
