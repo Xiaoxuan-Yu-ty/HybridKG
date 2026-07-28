@@ -105,5 +105,3 @@ nesy_gnn/graphs/graph_meta.pkl
 nesy_gnn/graphs/patient_graph_anmerge.gpickle
 utils/__pycache__
 nesy_gnn/__pycache__/
-nesy_gnn/__pycache__/train_model.cpython-312.pyc
-nesy_gnn/__pycache__/train_pipeline.cpython-312.pyc

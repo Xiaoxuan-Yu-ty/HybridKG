@@ -4,8 +4,8 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("ADNI" "ANMerge" "GEO")
-K_VALUES=(8)
+DATASETS=("ANMerge") #"ADNI" "GEO")
+K_VALUES=(8 12 16 20)
 MODELS=("GAT" "GCN" "GIN")
 
 # Base directory for outputs
@@ -51,10 +51,10 @@ for dataset in "${DATASETS[@]}"; do
                 --dataset "$dataset" \
                 --model_type "$model" \
                 --use_kg \
-                --num_trial 1 \
+                --num_trial 100 \
                 --n_jobs 1 \
                 --n_splits 3 \
-                --epochs 5 \
+                --epochs 200 \
                 --seed 42
 
             echo "Finished execution for Dataset=$dataset, k=$k, Model=$model"

@@ -37,7 +37,7 @@ class BaselineGCN(nn.Module):
 
     def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
-            x = conv(x, edge_index, edge_attr)
+            x = conv(x, edge_index, edge_attr) # GCNConv accepts edge_weight=[E] and being used in Ajacency matrix as w_ij
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
@@ -88,14 +88,36 @@ class BaselineGAT(nn.Module):
         return F.log_softmax(x, dim=1), None
 
 class MLP(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
-        super().__init__()
-        self.lin1 = nn.Linear(in_channels, hidden_channels)
-        self.bn   = nn.BatchNorm1d(hidden_channels)
-        self.lin2 = nn.Linear(hidden_channels, out_channels)
-
+    """
+    Multi-layer perceptron for GIN.
+    """
+    
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2):
+        super(MLP, self).__init__()
+        self.num_layers = num_layers
+        
+        self.lins = nn.ModuleList()
+        self.lins.append(nn.Linear(in_channels, hidden_channels))
+        
+        for _ in range(num_layers - 2):
+            self.lins.append(nn.Linear(hidden_channels, hidden_channels))
+        
+        if num_layers > 1:
+            self.lins.append(nn.Linear(hidden_channels, out_channels))
+        
+        # Batch normalization
+        self.bns = nn.ModuleList()
+        for _ in range(num_layers - 1):
+            self.bns.append(nn.BatchNorm1d(hidden_channels))
+    
     def forward(self, x):
-        return self.lin2(F.relu(self.bn(self.lin1(x))))
+        for i in range(self.num_layers - 1):
+            x = self.lins[i](x)
+            x = self.bns[i](x)
+            x = F.relu(x)
+        
+        x = self.lins[-1](x)
+        return x
 
 
 class BaselineGIN(nn.Module):
@@ -105,6 +127,7 @@ class BaselineGIN(nn.Module):
         self.dropout = dropout
         self.convs = nn.ModuleList()
         self.bns   = nn.ModuleList()
+        self.num_layers = num_layers
 
         self.convs.append(GINConv(MLP(in_channels, hidden_channels, hidden_channels)))
         for _ in range(num_layers - 2):
@@ -351,7 +374,7 @@ class FuzzyGCN(nn.Module):
 
         # ----- GCN forward -----
         for i in range(self.num_layers - 1):
-            x = self.convs[i](x, edge_index)
+            x = self.convs[i](x, edge_index, edge_attr)
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
@@ -493,12 +516,12 @@ class FuzzyGIN(nn.Module):
     def forward(self, x, edge_index, edge_attr=None, topo_features=None):
         # GIN forward pass
         for i in range(self.num_layers - 1):
-            x = self.convs[i](x, edge_index, edge_attr)
+            x = self.convs[i](x, edge_index)
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         
-        h = self.convs[-1](x, edge_index, edge_attr)
+        h = self.convs[-1](x, edge_index)
         
         r = None
         h_prime = None
@@ -550,7 +573,7 @@ def get_model(model_type, in_channels, hidden_channels, out_channels,
         out_channels=out_channels,
         **kwargs
     )
-    print('Model', model)
+    # print('Model', model)
 
     return model
 

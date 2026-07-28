@@ -362,13 +362,13 @@ def train_epoch(model, data, train_mask, optimizer, use_kg, use_topo):
     optimizer.zero_grad()
     if use_kg and not use_topo:
         rule_feature = data.kg_scores
-        print(f'KGRuleGNN: rule_feature={rule_feature.size()}')
+        # print(f'KGRuleGNN: rule_feature={rule_feature.size()}')
     elif use_topo and not use_kg:
         rule_feature = data.topo_features
-        print(f'FuzzyGNN: rule_feature={rule_feature.size()}')
+        # print(f'FuzzyGNN: rule_feature={rule_feature.size()}')
     elif use_topo and use_kg:
         rule_feature = torch.cat([data.topo_features, data.kg_scores], dim=1)
-        print(f'FuzzyKGRuleGNN: rule_feature={rule_feature.size()}')
+        # print(f'FuzzyKGRuleGNN: rule_feature={rule_feature.size()}')
     else:
         rule_feature=None
 
@@ -496,15 +496,15 @@ def run_inner_hpo(
         # (3) Add KG-specific parameters if using KG rules
         if not use_topo and use_kg and hasattr(data, "kg_scores") and data.kg_scores is not None:
             model_kwargs["kg_in_channels"] = data.kg_scores.size(1)
-            print(f"kg_in_channels = {data.kg_scores.size(1)}")
+            #print(f"kg_in_channels = {data.kg_scores.size(1)}")
 
         # (4) Add Fuzzy/Topology-specific parameters if using fuzzy rules
         if not use_kg and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
             model_kwargs["num_rules"] = data.topo_features.size(1)
-            print(f"num_rules = {data.topo_features.size(1)}")
+            #print(f"num_rules = {data.topo_features.size(1)}")
         if use_kg and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
             model_kwargs["num_rules"] = data.topo_features.size(1) + data.kg_scores.size(1)
-            print(f"num_rules = {model_kwargs["num_rules"]}")
+            #print(f"num_rules = {model_kwargs['num_rules']}")
         
         model = get_model(
             model_type=model_type, 
@@ -531,7 +531,7 @@ def run_inner_hpo(
             best_score, patience_count = 0.0, 0
             best_state = None
 
-            for epoch in range(1, epochs + 1):
+            for epoch in tqdm(range(1, epochs + 1), desc=f"Trial {trial} Outer fold {outer_fold} HPO"):
                 train_loss = train_epoch(
                     model=model,
                     data=data,
@@ -717,7 +717,7 @@ def run_cv(
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
         # Train the model on the full training fold before evaluation
-        for _ in range(epochs):
+        for _ in tqdm(range(epochs), desc=f"Fold {fold} final retraining with best params"):
             train_epoch(model=model, 
                         data=d, 
                         train_mask=train_mask, 
