@@ -70,25 +70,19 @@ def create_shuffled_train_val_test_masks(features_df, labels_series, split_ratio
     return train_ids, val_ids, test_ids
 
 
-def build_knn_graph_with_masks(features_df, labels_series, k=8, metric='cosine', 
-                              add_label_edges=False, rewire_edges=False,
-                              split_ratio=(0.7, 0.15, 0.15),
+def build_knn_graph_with_masks(features_df, labels, k=8, metric='cosine', 
                               base_graph_type=nx.MultiDiGraph):
     """
-    Builds a k-NN graph with Patient IDs as node names, original rewiring logic,
-    and randomized train/val/test masks.
+    Builds a k-NN graph with Patient IDs as node names, 
     """
     # 1. prepare data
     patient_ids = features_df.index.tolist()
-    # create train, val, test masks
-    train_ids, val_ids, test_ids = create_shuffled_train_val_test_masks(features_df, labels_series, split_ratio)
     
     # Map ID to its position in the original matrix for k-NN lookup
     id_to_pos = {pid: i for i, pid in enumerate(patient_ids)}
     pos_to_id = {i: pid for i, pid in enumerate(patient_ids)}
     
     features_matrix = features_df.values
-    labels_array = labels_series.values
     
     # 2. Find k-nearest neighbors
     nbrs = NearestNeighbors(n_neighbors=k, metric=metric).fit(features_matrix)
@@ -104,51 +98,6 @@ def build_knn_graph_with_masks(features_df, labels_series, k=8, metric='cosine',
             v = pos_to_id[v_idx]
             sim = 1.0 - dists[i, r]
             edge_list.append((u, v, sim))
-    
-    # 4. Add Label-based Edges
-    if add_label_edges:
-        for i, u in enumerate(tqdm(patient_ids, desc="Adding label edges")):
-            same_label_idx = np.where(labels_array == labels_array[i])[0]
-            knn_neighbors = inds[i, 1:]
-            
-            # Intersection of same label and k-NN neighbors
-            valid_neighbors = [j for j in same_label_idx if j in knn_neighbors]
-            for j in valid_neighbors:
-                v = pos_to_id[j]
-                pos_in_inds = np.where(inds[i, :] == j)[0][0]
-                sim = 1.0 - dists[i, pos_in_inds]
-                edge_list.append((u, v, sim))
-
-    # 5. Original Rewire Logic
-    edges_to_remove = set()
-    if rewire_edges:
-        rewired_count = 0
-        for i, u in enumerate(tqdm(patient_ids, desc="Rewiring")):
-            neighbors_idx = inds[i, 1:]
-            to_remove_idx = []
-            
-            for j in neighbors_idx:
-                sim = 1.0 - dists[i, np.where(inds[i, :] == j)[0][0]]
-                if labels_array[j] != labels_array[i] and sim < 0.65:
-                    to_remove_idx.append(j)
-                    # Mark for global removal
-                    v = pos_to_id[j]
-                    edges_to_remove.add(tuple(sorted((u, v))))
-
-            same_label_idx = [j for j in range(len(patient_ids)) if labels_array[j] == labels_array[i] and j != i and j not in neighbors_idx]
-            
-            if to_remove_idx and same_label_idx:
-                # Find best same-label candidates to replace the removed ones
-                sims = [1.0 - dists[i, np.where(inds[i, :] == j)[0][0]] if j in inds[i, :] else 0.0 for j in same_label_idx]
-                top_k_indices = np.argsort(sims)[-len(to_remove_idx):]
-                
-                for idx in top_k_indices:
-                    j = same_label_idx[idx]
-                    v = pos_to_id[j]
-                    if sims[idx] > 0.0:
-                        edge_list.append((u, v, sims[idx]))
-                        rewired_count += 1
-        print(f"Rewired {rewired_count} edges.")
 
     # 6. Final Graph Construction
     G = base_graph_type()
@@ -157,19 +106,20 @@ def build_knn_graph_with_masks(features_df, labels_series, k=8, metric='cosine',
     for pid in patient_ids:
         G.add_node(pid, 
                    x=features_df.loc[pid].values, 
-                   y=int(labels_series.loc[pid]),
-                   train_mask=(pid in train_ids),
-                   val_mask=(pid in val_ids),
-                   test_mask=(pid in test_ids),
+                   y=int(labels.loc[pid]),
                    type='Patient') # Added type for HeteroData clarity
     
     # Add edges
     for u, v, w in edge_list:
-        if tuple(sorted((u, v))) not in edges_to_remove:
-            # add edges in both directions to simulate undirected similarity
-            G.add_edge(u, v, key='similar', relation='similar',weight=float(w))
-            G.add_edge(v, u, key='similar', relation='similar',weight=float(w))
-            
+        # add edges in both directions to simulate undirected similarity
+        G.add_edge(u, v, key='similar', relation='similar',weight=float(w))
+        G.add_edge(v, u, key='similar', relation='similar',weight=float(w))
+
+    homophily = sum(G.nodes[u]['y'] == G.nodes[v]['y']
+                        for u, v in G.edges()) / G.number_of_edges()
+    print(f'  Nodes: {G.number_of_nodes()}  Edges: {G.number_of_edges()}')
+    print(f'  Edge homophily: {homophily:.3f}')
+         
     return G
 
 class PatientNetworkGenerator:
@@ -309,7 +259,8 @@ class PatientNetworkGenerator:
                                 data: pd.DataFrame, 
                                 exp_df: pd.DataFrame, 
                                 disease_label: int = 1,
-                                control_label: int = 0
+                                control_label: int = 0,
+                                k =5,
                             ) -> Tuple[nx.DiGraph, pd.DataFrame, pd.DataFrame]:
         """
         Generates a combined network:
@@ -331,8 +282,8 @@ class PatientNetworkGenerator:
         # 2. Add Patient-Patient Similarity Edges (Cosine)
         print("Contructing Patient-Patient Netwrok")
         patient_graph = build_knn_graph_with_masks(features_df=exp_df,
-                                                   labels_series=data['label'],
-                                                   k=5,
+                                                   labels=data['label'],
+                                                   k=k,
                                                    base_graph_type=nx.MultiDiGraph)
 
         full_graph = nx.compose(full_graph, patient_graph)
@@ -342,17 +293,11 @@ class PatientNetworkGenerator:
         summary_df = pd.DataFrame(0, index=data.index, columns=['pos_edges', 'neg_edges'])
 
         # Explicitly add the mask columns as boolean/object types
-        summary_df['train'] = False
-        summary_df['val'] = False
-        summary_df['test'] = False
         summary_df['linked_nodes'] = [[] for _ in range(len(summary_df))] # Initialize with empty lists
         summary_df['label'] = data['label'].to_list()
         # Pre-fill the masks for all patients from the patient_graph
         for patient in summary_df.index:
             node_attrs = patient_graph.nodes[patient]
-            summary_df.at[patient, 'train'] = node_attrs.get('train_mask', False)
-            summary_df.at[patient, 'val'] = node_attrs.get('val_mask', False)
-            summary_df.at[patient, 'test'] = node_attrs.get('test_mask', False)
             # Initialize an empty list for each patient to store linked symbols/nodes
             summary_df.at[patient, 'linked_nodes'] = []
         
@@ -427,7 +372,7 @@ class PatientNetworkGenerator:
         # 2. Add Patient-Patient Similarity Edges (Cosine)
         print("Constructing Patient-Patient Network...")
         patient_graph = build_knn_graph_with_masks(features_df=exp_df,
-                                                   labels_series=data['label'],
+                                                   labels=data['label'],
                                                    k=k,
                                                    base_graph_type=nx.MultiDiGraph)
         print("Constructing Patient-Patient Network Done\n")
@@ -439,9 +384,6 @@ class PatientNetworkGenerator:
             'pos_edges_healthy', 'neg_edges_healthy'
         ])
 
-        summary_df['train'] = False
-        summary_df['val'] = False
-        summary_df['test'] = False
         summary_df['linked_disease_nodes'] = [[] for _ in range(len(summary_df))]
         summary_df['linked_healthy_nodes'] = [[] for _ in range(len(summary_df))]
         summary_df['label'] = data['label'].to_list()
@@ -449,10 +391,7 @@ class PatientNetworkGenerator:
         # Pre-fill structural splits from the KNN patient graph
         for patient in summary_df.index:
             node_attrs = patient_graph.nodes[patient]
-            summary_df.at[patient, 'train'] = node_attrs.get('train_mask', False)
-            summary_df.at[patient, 'val'] = node_attrs.get('val_mask', False)
-            summary_df.at[patient, 'test'] = node_attrs.get('test_mask', False)
-        
+            
         # Identify non-zero expression values (radicals) 
         all_common = set(map_disease.keys()) | set(map_control.keys())
         #print("Common Gene Symbols:", all_common)
@@ -480,7 +419,7 @@ class PatientNetworkGenerator:
                     rel = rel_map_disease.get(direction)
                     
                     full_graph.add_edge(patient, target_node, key=rel, relation=rel, weight=weight)
-                    full_graph.add_edge(target_node, patient, key=rel, relation=f'rev_{rel}', weight=weight)
+                    full_graph.add_edge(target_node, patient, key=f'rev_{rel}', relation=f'rev_{rel}', weight=weight)
                     
                     # Update metrics
                     col = 'pos_edges_disease' if direction == 1 else 'neg_edges_disease'
@@ -493,7 +432,7 @@ class PatientNetworkGenerator:
                     rel = rel_map_healthy.get(direction)
                     
                     full_graph.add_edge(patient, target_node, key=rel, relation=rel, weight=weight)
-                    full_graph.add_edge(target_node, patient, key=rel, relation=f'rev_{rel}', weight=weight)
+                    full_graph.add_edge(target_node, patient, key=f'rev_{rel}', relation=f'rev_{rel}', weight=weight)
                     
                     # Update metrics
                     col = 'pos_edges_healthy' if direction == 1 else 'neg_edges_healthy'
@@ -594,7 +533,7 @@ def generat_and_save_hybrid(exp_path:str,
     # 3. Convert network to triples: edgelist df
     graph_df = nx.to_pandas_edgelist(network)
     graph_df = graph_df[~graph_df['relation'].str.contains('rev', na=False)]
-    graph_df=graph_df[['source','relation','target','label']]
+    graph_df=graph_df[['source','relation','target']]
     graph_df.to_csv(save_edgelist)
     
     # 4. save
@@ -602,58 +541,3 @@ def generat_and_save_hybrid(exp_path:str,
     summary.to_csv(save_summary)
 
     return network, graph_df, summary
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Generate Hybrid Patient-Protein Networks.")
-
-    # Stable Arguments
-    parser.add_argument("--kg_disease", type=str, default="../datasets/base_kgs/old_ppi_kg.pkl", 
-                        help="Path to Disease Knowledge Graph (.pkl).")
-    parser.add_argument("--kg_healthy", type=str, default="../data/KG/healthy_aging_reversed_remove_noncausal.pkl", 
-                        help="Path to Healthy Knowledge Graph (.pkl).")
-    parser.add_argument("--output_dir", type=str, default="../CLEP_repeat/retrain_oldPPIKG", 
-                        help="Directory to save generated networks.")
-
-    # Arguments need to change
-    parser.add_argument("--exp_path", type=str, default="../data/ADNI/cleaned_gene_expression_data.csv", 
-                        help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--dataset", type=str, default="adni_OldTarget", 
-                        help="Name of the dataset (for naming files).")
-
-    parser.add_argument("--scoring_path", type=str, default="../data/ADNI/old_target/ecdf_1/sample_scoring_ecdf.csv", 
-                        help="Path to sample scoring CSV (must contain 'label' column).")
-    parser.add_argument("--scoring_type", type=str, default="ecdf", choices=['ecdf','std','all'],
-                        help="The scoring method used (for naming files).")
-    
-    parser.add_argument("--method", type=str, default="DiseaseKG", choices=['dual_hybrid','merge', 'DiseaseKG','HealthyKG'], 
-                        help="Network construction strategy.")
-    
-    args = parser.parse_args()
-
-    
-    for threshold in [1,1.5,2.5,5,10,20]:
-        scoring_path = f"../data/ADNI/old_target/ecdf_{threshold}/sample_scoring_ecdf.csv"
-        scoring_method = f"ecdf_{threshold}"
-        print(f"--- Initializing Generation: dataset-{args.dataset} |{args.method} | {scoring_method}---")
-        try:
-            # The main logic call
-            network, graph_df, summary = generat_and_save_hybrid(
-                exp_path=args.exp_path,
-                scoring_path=scoring_path,
-                kg_disease_path=args.kg_disease,
-                kg_health_path=args.kg_healthy,
-                output_dir=args.output_dir,
-                process_method=args.method,
-                scoring_method=scoring_method,
-                dataset=args.dataset
-            )
-            
-            print("\nProcess Complete.")
-            print(f"Final Graph Stats: {network.number_of_nodes()} nodes and {network.number_of_edges()} edges.")
-
-        except Exception as e:
-            print(f"Critical Error during network generation: {e}")
-
-if __name__ == "__main__":
-    main()

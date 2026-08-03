@@ -9,6 +9,8 @@ Compares:
 import gc
 import json
 import sys, os, pickle
+from typing import Optional
+
 import networkx as nx
 from tqdm import tqdm
 
@@ -125,7 +127,7 @@ def compute_kg_rule_scores(exp_df, rules):
         return pd.DataFrame(index=patients)
     return pd.DataFrame(scores, index=patients)
 
-def compute_topological_features(G):
+def compute_topological_features(G, nodes: Optional[list] = None):
     """
     Compute topological features for all nodes in the graph.
     
@@ -136,10 +138,13 @@ def compute_topological_features(G):
         dict: Dictionary containing topological features for each node
     """
     print("Computing topological features...")
+
+    if nodes is None:
+        nodes = list(G.nodes())
     
     # Basic features
-    degrees = np.array([G.degree(n) for n in G.nodes()])
-    clustering = np.array([nx.clustering(G, n) for n in G.nodes()])
+    degrees = np.array([G.degree(n) for n in nodes])
+    clustering = np.array([nx.clustering(G, n) for n in nodes])
     
     # Centrality measures
     eigenvector_centrality = np.array(list(nx.eigenvector_centrality(G, weight='weight', max_iter=1000).values()))
@@ -166,7 +171,6 @@ def compute_topological_features(G):
 def get_patient_features(
     kg_path: str, 
     exp_df: pd.DataFrame, 
-    ctl_ids:list,
     patients: list,
     z_norm: bool = True, 
     KGRule: bool = True
@@ -244,7 +248,7 @@ def build_patient_graph(
     k: int, 
     out_dir: str, 
     metric: str = 'cosine',
-    logfc: bool = True,
+    z_norm: bool = True,
     KGRule: bool = True
 ):
     """
@@ -274,9 +278,8 @@ def build_patient_graph(
     features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df = get_patient_features(
         kg_path, 
         exp_df, 
-        ctl_ids,
         patients,
-        z_norm=logfc, 
+        z_norm=z_norm, 
         KGRule=KGRule
     )
 
@@ -711,7 +714,7 @@ def run_cv(
     num_classes = max(labels)+1
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(np.zeros(n_patients), labels), 1):
-        print(f"\n--- Outer Fold {fold}/5 ---")
+        print(f"\n--- Outer Fold {fold}/{n_splits} ---")
         train_mask = torch.zeros(n_patients, dtype=torch.bool, device=device)
         test_mask = torch.zeros(n_patients, dtype=torch.bool, device=device)
         train_mask[train_idx] = True

@@ -107,7 +107,7 @@ def main():
         k=args.k, 
         out_dir=graph_output, 
         metric= 'cosine',
-        logfc= True, # use log2fc transformed expression scores as input features
+        z_norm= True, # use log2fc transformed expression scores as input features
         KGRule= False # not only use genes in KGRules
     )
     data_all      = build_pyg_data(G, use_direct_rules=False)
