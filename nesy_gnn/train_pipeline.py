@@ -194,17 +194,26 @@ def main():
     for model_name, res in results.items():
         # res['accuracy'], res['f1'], res['auc'] are now lists per fold
         accs = res['accuracy']
+        acc_weighted = res['balanced_accuracy']
         f1s = res['f1']
-        aucs = res['auc']
+        f1_macros = res['f1_macro']
+        f1_weighted = res['f1_weighted']
+        aucs = res['auroc']
+        auprcs = res['auprc']
+
         
         # Iterate through each fold to capture individual metric data points
-        for fold_idx, (acc, f1, auc) in enumerate(zip(accs, f1s, aucs), 1):
+        for fold_idx, (acc, weight_acc, f1, f1_ma, f1_we, auroc, auprc) in enumerate(zip(accs, acc_weighted, f1s, f1_macros, f1_weighted, aucs, auprcs), 1):
             long_format_rows.append({
                 'model': model_name,
                 'fold': fold_idx,
                 'accuracy': float(acc),
+                'balanced_accuracy': float(weight_acc),
                 'f1': float(f1),
-                'auc': float(auc) if not np.isnan(auc) else np.nan
+                'f1_macro': float(f1_ma),
+                'f1_weighted': float(f1_we),
+                'auroc': float(auroc) if not np.isnan(auroc) else np.nan,
+                'auprc': float(auprc)
             })
         
         # Store complex/non-scalar fold data (rules, parameters) separately

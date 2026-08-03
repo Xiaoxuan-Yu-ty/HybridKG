@@ -1,217 +1,66 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from GateEmbeddingTask.HRGCNConv import HRGCNConv
+from GateEmbeddingTask.HRGATConv import HRGATConv
 
-from torch_geometric.utils import softmax
-from torch_scatter import scatter
-
-import os
-import sys
-
-from GateEmbeddingTask.HRGCNConv import HRGCNLayer
-from GateEmbeddingTask.HRGATConv import HRGATLayer
-
-
-class HRGCN(nn.Module):
-
-    """
-    Full Heterogeneous Relation-aware GCN.
-
-    Pipeline:
-        Input projection
-            ↓
-        HRGCN Layer × L
-            ↓
-        Output projection
-    """
-
-    def __init__(
-        self,
-        data,
-        hidden_channels,
-        out_channels,
-        att_channels=32,
-        dropout=0.5,
-        num_layers=2,
-        negative_slop=0.2,
-    ):
+class BaseHeteroEncoder(torch.nn.Module):
+    """Base class that handles input projections and learnable embeddings."""
+    def __init__(self, 
+                 data, 
+                 hidden_channels, 
+                 out_channels, 
+                 num_layers, 
+                 dropout_rate, 
+                 negative_slope,):
         super().__init__()
-
-        self.hidden_channels = hidden_channels
-        self.out_channels = out_channels
+        self.dropout_rate = dropout_rate
         self.num_layers = num_layers
-        self.dropout = dropout
-        self.negative_slop = negative_slop
-
-        metadata = (data.node_types, data.edge_types)
-        node_types = data.node_types
-
-        # Input projection for each node type
+        
+        # Consistent input handling: 
+        # project original features if have to hidden space
+        # if not original feature, initialize embeddings
         self.input_lins = nn.ModuleDict()
         self.embeddings = nn.ModuleDict()
-        for node_type in node_types:
+
+        for node_type in data.node_types:
             if hasattr(data[node_type], "x") and data[node_type].x is not None:
                 in_dim = data[node_type].x.size(-1)
                 self.input_lins[node_type] = nn.Linear(in_dim, hidden_channels)
             else:
-                self.embeddings[node_type] = nn.Embedding(
-                    data[node_type].num_nodes,
+                self.embeddings[node_type] = nn.Embedding(data[node_type].num_nodes, hidden_channels)
+        # Layer Normalization
+        self.norms = nn.ModuleList([
+            nn.ModuleDict({
+                node_type: nn.LayerNorm(
                     hidden_channels
+                    if i < num_layers - 1
+                    else out_channels
                 )
-                
-        # Stacked HRGCN layers
-        self.layers = nn.ModuleList()
-        for i in range(num_layers):
-            self.layers.append(
-                HRGCNLayer(
-                    metadata=metadata,
-                    in_dim=hidden_channels,
-                    out_dim=hidden_channels,
-                    att_dim=att_channels,
-                    dropout=dropout,
-                    negative_slop=self.negative_slop
-                )
+                for node_type in data.node_types
+            })
+            for i in range(num_layers)
+        ])
+        
+
+    def _activate_dropout(self, x_dict):
+        return {
+            node_type: F.dropout(
+                F.elu(x),
+                p=self.dropout_rate,
+                training=self.training,
             )
-        # Output projection
-        self.output_lins = nn.ModuleDict()
-        for node_type in node_types:
-            self.output_lins[node_type] = nn.Linear(
-                hidden_channels,
-                out_channels,
-            )
-
-    def forward(self, x_dict, edge_index_dict):
-
-        # Input projection
-        new_x_dict = {}
-
-        for node_type in set(self.embeddings.keys()) | set(self.input_lins.keys()):
-            if node_type in x_dict and x_dict[node_type] is not None:
-                # has real features → project
-                new_x_dict[node_type] = F.dropout(
-                                            F.elu(self.input_lins[node_type](x_dict[node_type])),
-                                            p=self.dropout,
-                                            training=self.training,
-                                        )
-            else:
-                # no features → use embedding
-                new_x_dict[node_type] = F.dropout(
-                                            F.elu(self.embeddings[node_type].weight),
-                                            p=self.dropout,
-                                            training=self.training,
-                                        )
-
-        x_dict = new_x_dict
-
-        attn_weights = []
-
-        # HRGCN layers
-        for layer in self.layers:
-
-            out_dict, att_dict = layer(
-                x_dict,
-                edge_index_dict,
-            )
-
-            # residual update for existing node types
-            new_x_dict = {}
-            for node_type in x_dict.keys():
-                if node_type in out_dict:
-                    h = out_dict[node_type]
-                    h = F.dropout(
-                        h,
-                        p=self.dropout,
-                        training=self.training,
-                    )
-                    # residual connection: can be better, like h = alpha * h + (1-alpha)*(x_dict[node_type])
-                    h = h + x_dict[node_type]
-
-                    new_x_dict[node_type] = h
-
-                else:
-                    # no incoming relations
-                    new_x_dict[node_type] = x_dict[node_type]
-            x_dict = new_x_dict
-            attn_weights.append(att_dict)
-
-        # Output Projection
-        out_dict = {
-            node_type: self.output_lins[node_type](x)
             for node_type, x in x_dict.items()
         }
-        
-        return out_dict, attn_weights
 
-class HRGAT(nn.Module):
-
-    """
-    Hierarchical Relational Graph Attention Network
-    """
-
-    def __init__(
-        self,
-        data,
-        hidden_channels,
-        out_channels,
-        att_channels=32,
-        dropout=0.5,
-        num_layers=2,
-        negative_slop=0.2
-    ):
-        super().__init__()
-
-        self.hidden_channels = hidden_channels
-        self.out_channels = out_channels
-        self.dropout = dropout
-        self.num_layers = num_layers
-
-        metadata = (data.node_types, data.edge_types)
-
-   
-        # Input projections
-        self.input_lins = nn.ModuleDict()
-        self.embeddings = nn.ModuleDict()
-
-        for node_type in data.node_types:
-
-            if (hasattr(data[node_type], "x") and data[node_type].x is not None):
-                in_dim = data[node_type].x.size(-1)
-                self.input_lins[node_type] = nn.Linear(
-                    in_dim,
-                    hidden_channels,
-                )
-
-            else:
-                self.embeddings[node_type] = nn.Embedding(
-                    data[node_type].num_nodes,
-                    hidden_channels,
-                )
-
-        # HRGAT layers
-        self.layers = nn.ModuleList()
-        for _ in range(num_layers):
-            self.layers.append(
-                HRGATLayer(
-                    metadata=metadata,
-                    in_dim=hidden_channels,
-                    out_dim=hidden_channels,
-                    att_dim=att_channels,
-                    dropout=dropout,
-                    negative_slope=negative_slop,
-                )
-            )
-
-        # Output projection
-        self.output_lins = nn.ModuleDict()
-        for node_type in data.node_types:
-            self.output_lins[node_type] = nn.Linear(
-                hidden_channels,
-                out_channels,
-            )
-
-    def forward(self, x_dict, edge_index_dict):
-
-        # Input projection
+    def _normalize(self, x_dict, layer_idx):
+        return {
+            node_type: self.norms[layer_idx][node_type](x) # type: ignore
+            for node_type, x in x_dict.items()
+        }
+    
+    def get_initial_x_dict(self, x_dict):
+        """Standardizes input before GNN layers."""
         new_x_dict = {}
         all_types = (set(self.input_lins.keys()) | set(self.embeddings.keys()))
         for node_type in all_types:
@@ -224,53 +73,112 @@ class HRGAT(nn.Module):
             h = F.elu(h)
             h = F.dropout(
                 h,
-                p=self.dropout,
+                p=self.dropout_rate,
                 training=self.training,
             )
             new_x_dict[node_type] = h
+        return new_x_dict
 
-        x_dict = new_x_dict
 
-        # HRGAT layers
-        semantic_attentions = []
-        for layer in self.layers:
+class HRGAT(BaseHeteroEncoder):
+    def __init__(self, data, 
+                 hidden_channels, 
+                 out_channels, 
+                 num_layers, 
+                 dropout_rate, 
+                 att_channels=32,
+                 negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
+        
+        self.layers = nn.ModuleList([
+            HRGATConv(
+                metadata=(data.node_types, data.edge_types),
+                in_dim=hidden_channels,
+                out_dim=hidden_channels if i < num_layers - 1 else out_channels,
+                att_dim=att_channels,
+                negative_slope=negative_slope,
+            ) for i in range(num_layers)
+        ])
+    
+    def forward(self, x_dict, edge_index_dict,):
+        x_dict = self.get_initial_x_dict(x_dict)
+        attention_weights = []
+        
+        for i, conv in enumerate(self.layers):
+            x_dict, att_dict = conv(x_dict, edge_index_dict)
+            attention_weights.append(att_dict)
+            if i < self.num_layers-1:
+                x_dict = self._normalize(x_dict,layer_idx=i)
+                x_dict = self._apply_activation_dropout(x_dict)
+        
+        return x_dict, attention_weights
 
-            out_dict, att_dict = layer(
-                x_dict,
-                edge_index_dict,
-            )
+class HRGCN(BaseHeteroEncoder):
+    def __init__(self, data, 
+                 hidden_channels, 
+                 out_channels, 
+                 num_layers, 
+                 dropout_rate, 
+                 att_channels=32,
+                 negative_slope=0.2):
+        super().__init__(data, hidden_channels, out_channels, num_layers, dropout_rate, negative_slope)
+        
+        self.layers = nn.ModuleList([
+            HRGCNConv(
+                metadata=(data.node_types, data.edge_types),
+                in_dim=hidden_channels,
+                out_dim=hidden_channels if i < num_layers - 1 else out_channels,
+                att_dim=att_channels,
+                negative_slope=negative_slope,
+            ) for i in range(num_layers)
+        ])
 
-            new_x_dict = {}
-            for node_type in x_dict.keys():
+    def forward(self, x_dict, edge_index_dict,):
+        x_dict = self.get_initial_x_dict(x_dict)
+        attention_weights = []
+        
+        for i, conv in enumerate(self.layers):
+            x_dict, att_dict = conv(x_dict, edge_index_dict)
+            attention_weights.append(att_dict)
+            if i < self.num_layers-1:
+                            x_dict = self._normalize(x_dict,layer_idx=i)
+                            x_dict = self._apply_activation_dropout(x_dict)
+        
+        return x_dict, attention_weights
 
-                if node_type in out_dict:
+# -- Fuzzy Rule models ---------------------------------------------------------
+class FuzzyRuleLayer(nn.Module):
+    """
+    FireGNN fuzzy rules exactly as defined in the paper.
+    Implements Eq. (3): r_i(u) = sigmoid(alpha_i * (f_i(u) - theta_i))
+    """
 
-                    h = out_dict[node_type]
-                    h = F.dropout(
-                        h,
-                        p=self.dropout,
-                        training=self.training,
-                    )
-                    # residual
-                    if h.size(-1) == x_dict[node_type].size(-1):
-                        h = h + x_dict[node_type]
+    def __init__(self, num_rules=6):
+        super().__init__()
+        self.num_rules = num_rules
 
-                    new_x_dict[node_type] = h
+        # Learnable thresholds θ_i
+        self.theta = nn.Parameter(torch.zeros(num_rules))
 
-                else:
-                    new_x_dict[node_type] = x_dict[node_type]
+        # Learnable sharpness α_i (initialized positive)
+        self.alpha = nn.Parameter(torch.ones(num_rules))
 
-            x_dict = new_x_dict
+    def forward(self, topo_features):
+        """
+        Args:
+            topo_features: Tensor [N, 6]
+                [degree, clustering coefficient, 2-hop label agreement]
 
-            semantic_attentions.append(att_dict)
+        Returns:
+            r: Tensor [N, 6] fuzzy rule activations
+        """
+        # Ensure correct dimensionality
+        assert topo_features.size(1) == self.num_rules
 
-        # Output projection
-        out_dict = {
-            node_type: self.output_lins[node_type](x)
-            for node_type, x in x_dict.items()
-        }
-
-        return out_dict, semantic_attentions
+        # r_i(u) = sigmoid(alpha_i * (f_i(u) - theta_i))
+        r = torch.sigmoid(self.alpha * (topo_features - self.theta))
+        return r
+    
 
 class LinkDecoder(torch.nn.Module):
     """Decoder: Scores edges using relation-specific embeddings."""
@@ -290,24 +198,6 @@ class LinkDecoder(torch.nn.Module):
         rel_v = self.rel_emb["__".join(edge_type)]
         return (src_x * rel_v * dst_x).sum(dim=-1) #
 
-class MLPClassifier(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers=2, dropout=0.2):
-        super().__init__()
-        self.dims = [in_channels] + [hidden_channels] * (num_layers - 1) + [out_channels]
-        self.layers = torch.nn.ModuleList()
-        
-        for i in range(len(self.dims) - 1):
-            self.layers.append(torch.nn.Linear(self.dims[i], self.dims[i+1]))
-            
-        self.dropout = dropout
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i < len(self.layers) - 1:
-                x = F.relu(x)
-                x = F.dropout(x, p=self.dropout, training=self.training)
-        return x
 
 class HRGNNModel(torch.nn.Module):
     def __init__(self, 
@@ -318,27 +208,49 @@ class HRGNNModel(torch.nn.Module):
                  num_layers, 
                  dropout,
                  num_classes,
+                 num_rules,
                  ):
         super().__init__()
         self.encoder = encoder
-        
-        self.classifier = MLPClassifier(
-            in_channels=out_channels, 
-            hidden_channels=hidden_channels,
-            out_channels=num_classes,
-            num_layers=num_layers,
-            dropout=dropout
-        )
-        
         self.decoder = LinkDecoder(edge_types=data.edge_types, 
                                     out_channels=out_channels)
+
+        # ---------- Fuzzy rules ----------
+        self.fuzzy_layer = FuzzyRuleLayer(num_rules=num_rules)
+        # Rule projection: Eq. (4) 
+        self.rule_proj = nn.Linear(num_rules, out_channels)
+        # Gate: Eq. (5)
+        self.gate = nn.Linear(2*out_channels, out_channels)
+
+        # Classifier
+        self.classifier = nn.Linear(out_channels, num_classes)
 
     def encode(self, x_dict, edge_index_dict):
         h_dict, attention_weights= self.encoder(x_dict, edge_index_dict)
         return h_dict, attention_weights
 
-    def classify(self, h_dict):
-        return self.classifier(h_dict['Patient'])
+    def classify(self, x_dict, node_type:str, rule_features=None):
+
+        h = x_dict[node_type]
+        
+        r = None
+        if rule_features is not None:
+            # ----- Fuzzy rule activation (Eq. 3) -----
+            r = self.fuzzy_layer(rule_features)  # [N, 6]
+
+            # ----- Rule projection (Eq. 4) ---
+            e = self.rule_proj(r)
+            # ----- Gating (Eq. 5) -----
+            g = torch.sigmoid(self.gate(torch.cat([h, e], dim=1)))
+
+            # ----- Fusion (Eq. 6) -----
+            h_prime = g * h + (1 - g) * e
+            # ----- Classification -----
+            out = self.classifier(h_prime)
+        else:
+            out= self.classifier(h)
+
+        return F.log_softmax(out, dim=1), r
 
     def decode(self, h_dict, edge_type, edge_index):
         # Used for Link Prediction loss
@@ -353,9 +265,9 @@ def get_model(
     att_channels:int,
     num_layers: int,
     dropout: float,
-    negative_slop:float,
+    negative_slope:float,
     num_classes: int,
-    device: torch.device
+    num_rules:int
 ):
     """
     Factory function to build a HRGNN (Hierarchical Relational GNN).
@@ -363,35 +275,29 @@ def get_model(
     Returns:
         HRGNN
     """
-    if model_type.lower() == 'gcn':
-        encoder = HRGCN(data=data,
-                      hidden_channels=hidden_channels,
-                      out_channels=out_channels,
-                      att_channels=att_channels,
-                      dropout=dropout,
-                      num_layers=num_layers,
-                      negative_slop=negative_slop,)
-    elif model_type.lower() == 'gat':
-        encoder = HRGAT(data=data,
-                      hidden_channels=hidden_channels,
-                      out_channels=out_channels,
-                      att_channels=att_channels,
-                      dropout=dropout,
-                      num_layers=num_layers,
-                      negative_slop=negative_slop)
-    else:
-        raise ValueError("Please choose model_type in ['gcn', 'gat']")
+    model_type = model_type.lower()
+    registry = {'hrgcn':HRGCN, 'hrgat': HRGAT}
+    if model_type not in registry:
+            raise ValueError(f"Unsupported model_type: {model_type}")
     
+    encoder = registry[model_type](data=data, 
+                 hidden_channels=hidden_channels, 
+                 out_channels=out_channels, 
+                 num_layers=num_layers, 
+                 dropout_rate=dropout, 
+                 att_channels=att_channels,
+                 negative_slope=negative_slope
+
+    )
     model = HRGNNModel(data=data,
                        encoder=encoder,
                        hidden_channels=hidden_channels,
                        out_channels=out_channels,
                        num_layers=num_layers,
                        num_classes=num_classes,
+                       num_rules=num_rules,
                        dropout=dropout)
 
-    if device is not None:
-        model = model.to(device)
 
     return encoder, model
 

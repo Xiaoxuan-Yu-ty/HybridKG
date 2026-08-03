@@ -21,71 +21,101 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 from torch_geometric.utils import from_networkx
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+)
 from sklearn.preprocessing import StandardScaler
 
 from nesy_gnn.models import get_model
 from nesy_gnn.rule_engine import extract_rules
 
-def compute_log2fc(expression_df, ctl_ids):
-    """Without statistical testing of whether disease_group and control_group gene expression
-       significantly or not. Simply calculate a continous logfc score for each patient's each gene
-       expression: 
-       logfc[gene,patient] = log2fc_gene_expression[gene,patient] - log2fc_gene_expression[gene,control_median]
 
-    Args:
-        expression_df (pd.DataFrame): [gene, sample_ids]
-        ctl_ids (list): _description_
 
-    Returns:
-        np.array: _description_
+def compute_gene_zscore(
+    expression_df: pd.DataFrame,
+    log_transform: bool = True,
+    robust: bool = False,
+    eps: float = 1e-8,
+):
     """
-    # 1. Filter valid control columns and check if any exist
-    ctl_cols   = [c for c in ctl_ids if c in expression_df.columns]
-    if not ctl_cols:
-        raise ValueError("None of the specified ctl_ids match the columns in expression_df.")
-    ctl_median = expression_df[ctl_cols].median(axis=1)
+    Compute gene-wise z-scores (or robust z-scores).
 
-    # 2. Safety check: Handle negative values using Min-Max scaling
-    min_val = expression_df.min().min()
-    if min_val < -1:
-        # Min-Max scaling formula: (x - min) / (max - min), completely preventing log(<=0) errors.
-        df_min = expression_df.min().min()
-        df_max = expression_df.max().min() if expression_df.max().max() == expression_df.max().min() else expression_df.max().max()
-        
-        if df_max - df_min > 0:
-            expression_df = (expression_df - df_min) / (df_max - df_min)
-        else:
-            expression_df = expression_df - df_min  # Fallback if flat data
+    Parameters
+    ----------
+    expression_df(pd.DataFrame):[genes, samples]
+    log_transform(bool): default=True. Apply log2(x + 1) before normalization.
+    robust(bool): default=False.
+        If False:
+            z = (x - mean) / std
 
-    # 3. Compute control median safely (ignoring NaNs)
-    ctl_median = expression_df[ctl_cols].median(axis=1, skipna=True)
+        If True:
+            robust_z = (x - median) / (1.4826 * MAD)
 
-    # 4. Compute log2 values safely
-    log_expr = np.log2(expression_df.clip(lower=0) + 1)
-    log_ctl_median = np.log2(ctl_median.clip(lower=0) + 1)
+    eps(float): Small constant preventing division by zero.
 
-    # 5. Subtract and handle any remaining NaNs
-    logfc_df = log_expr.subtract(log_ctl_median, axis=0)
-    #logfc_df = logfc_df.fillna(0.0)
-    return logfc_df
+    Returns
+    -------
+    z_df (pd.DataFrame): Gene-wise normalized expression.[genes, samples]
+    center (pd.Series): Mean (or median) of each gene.
+    scale (pd.Series): Std (or scaled MAD) of each gene.
 
-def compute_kg_rule_scores(log2fc_df, rules):
+    Notes
+    -----
+    The returned center and scale should be saved from the
+    training set and reused for validation/test data to
+    avoid data leakage.
+    """
+
+    expr = expression_df.astype(float).copy()
+
+    if log_transform:
+        if (expr < 0).any().any():
+            raise ValueError(
+                "Negative expression values detected. "
+                "log2(x+1) assumes non-negative expression."
+            )
+        expr = np.log2(expr + 1)
+
+    if robust:
+        center = expr.median(axis=1) # type: ignore
+        mad = expr.sub(center, axis=0).abs().median(axis=1) # type: ignore
+        # Make MAD comparable to standard deviation
+        scale = 1.4826 * mad
+    else:
+        center = expr.mean(axis=1)
+        scale = expr.std(axis=1, ddof=1)
+
+    scale = scale.mask(scale < eps, 1.0)
+
+    z_df = expr.sub(center, axis=0).div(scale, axis=0) # type: ignore
+
+    return z_df, center, scale
+
+def compute_kg_rule_scores(exp_df, rules):
     """Compute continuous KG rule activation score per patient per rule.
        Transform GE data to KGRule scores
 
-    Score = mean(sign_g * log2fc[g]) for genes in the rule.
+    Score = mean(sign_g * exp[g]) for genes in the rule.
     Positive score means the rule's causal direction is supported.
+
+    Parameters
+    -----------
+        exp_df(pd.DataFrame): [genes, samples]
+        rules(list):
     """
-    patients = log2fc_df.columns.tolist()
+    patients = exp_df.columns.tolist()
     scores   = {}
 
     for rule in rules:
         signals = []
         for gene, sign in zip(rule.genes, rule.signs):
             g = gene.upper()
-            if g in log2fc_df.index:
-                signals.append(log2fc_df.loc[g] * sign)
+            if g in exp_df.index:
+                signals.append(exp_df.loc[g] * sign)
         if not signals:
             continue
         avg = pd.concat(signals, axis=1).mean(axis=1) #signals list contain rule_scores for all patients
@@ -133,21 +163,12 @@ def compute_topological_features(G):
         'avg_edge_weight': avg_edge_weight
     }
 
-import os
-import pickle
-import json
-import networkx as nx
-import numpy as np
-import pandas as pd
-from sklearn.neighbors import NearestNeighbors
-from tqdm import tqdm
-
 def get_patient_features(
     kg_path: str, 
     exp_df: pd.DataFrame, 
     ctl_ids:list,
     patients: list,
-    logfc: bool = True, 
+    z_norm: bool = True, 
     KGRule: bool = True
 ):
     """
@@ -159,7 +180,7 @@ def get_patient_features(
         exp_df (pd.DataFrame): Gene expression matrix (genes x samples or samples x genes).
         ctl_ids (list): Control group sample IDs.
         patients (list): List of patient IDs to extract features for.
-        logfc (bool): Whether to use log-fold change transformated values as features. Defaults to True.
+        z_norm (bool): Whether to use gene-wise z-score normalized GE as features. Defaults to True.
         KGRule (bool): Whether to restrict features to genes present in KG rules. Defaults to True.
 
     Returns:
@@ -182,31 +203,34 @@ def get_patient_features(
     )
     direct_rules = [r for r in rules if r.rule_type == 'direct_gene_ad']
 
-    # 2. Prepare log2fc_df to get features for building patient graph
+    # 2. Prepare zscore_df to get features for building patient graph
     exp = exp_df.T if exp_df.shape[0] < exp_df.shape[1] else exp_df
-    
-    logfc_df = compute_log2fc(exp, ctl_ids)
-
+    zscore_df, center, scale = compute_gene_zscore(expression_df=exp,
+                                                   log_transform=True,
+                                                   robust=False)
     # Prepare features
     print('\nBuilding node features...')
-    if logfc and KGRule:
-        kg_genes = sorted({g.upper() for r in rules for g in r.genes if g.upper() in logfc_df.index})
-        features = logfc_df.loc[kg_genes][patients].T.values
-    elif logfc and not KGRule:
-        kg_genes = logfc_df.index.tolist()
-        features = logfc_df.T.loc[patients].values
+    if z_norm and KGRule:
+        # restrict to KGRule associated genes as featrues
+        kg_genes = sorted({g.upper() for r in rules for g in r.genes if g.upper() in zscore_df.index})
+        features = zscore_df.loc[kg_genes][patients].T.values
+    elif z_norm and not KGRule:
+        # use normalized gene data as features
+        kg_genes = zscore_df.index.tolist()
+        features = zscore_df.T.loc[patients].values
     else:
+        # use raw gene expression data as features
         kg_genes = exp.index.tolist()
         features = exp.T[patients].values
 
     # 3. KG rule scores: symbolic node features
     print('\nComputing KG rule scores per patient...')
-    kg_scores_df = compute_kg_rule_scores(logfc_df[patients], rules)
+    kg_scores_df = compute_kg_rule_scores(zscore_df[patients], rules)
     kg_scores = kg_scores_df.values  # (n_patients, n_rules)
     print(f' KG rule scores: {kg_scores.shape}')
 
     # Compute direct-rule-only scores
-    kg_scores_direct_df = compute_kg_rule_scores(logfc_df[patients], direct_rules)
+    kg_scores_direct_df = compute_kg_rule_scores(zscore_df[patients], direct_rules)
     kg_scores_direct = kg_scores_direct_df.values
     print(f' Direct-rule KG scores: {kg_scores_direct.shape}')
     
@@ -252,7 +276,7 @@ def build_patient_graph(
         exp_df, 
         ctl_ids,
         patients,
-        logfc=logfc, 
+        z_norm=logfc, 
         KGRule=KGRule
     )
 
@@ -393,44 +417,67 @@ def train_epoch(model, data, train_mask, optimizer, use_kg, use_topo):
 @torch.no_grad()
 def evaluate(model, data, mask, use_kg, use_topo):
     """
-    Evaluates the model on a specific subset of nodes given by a mask.
-
-    Args:
-        model (torch.nn.Module): The neural network model.
-        data (torch_geometric.data.Data): The graph data object.
-        mask (torch.Tensor): Boolean mask for target evaluation nodes.
-        use_kg (bool): Whether to pass Knowledge Graph features. Defaults to True.
-        use_topo (bool): Wheter to pass topological features.
-
     Returns:
-        tuple: (accuracy, f1_score, auroc)
+        metrics (dict): Dictionary containing evaluation metrics.
+        rules: Rule activations (if any).
     """
     model.eval()
-    
+
     if use_kg and not use_topo:
         rule_feature = data.kg_scores
     elif use_topo and not use_kg:
         rule_feature = data.topo_features
     elif use_topo and use_kg:
-        rule_feature = torch.cat([data.topo_features, data.kg_scores], dim=1)
+        rule_feature = torch.cat(
+            [data.topo_features, data.kg_scores], dim=1
+        )
     else:
-        rule_feature=None
+        rule_feature = None
 
-    out, rules = model(data.x, data.edge_index, data.edge_attr, rule_feature)
+    out, rules = model(
+        data.x,
+        data.edge_index,
+        data.edge_attr,
+        rule_feature,
+    )
+
     prob = torch.exp(out[mask])[:, 1].cpu().numpy()
     pred = out[mask].argmax(dim=1).cpu().numpy()
     true = data.y[mask].cpu().numpy()
-    
-    acc = accuracy_score(true, pred)
-    f1 = f1_score(true, pred, zero_division=0)
+
+    metrics = {}
+
+    metrics["accuracy"] = accuracy_score(true, pred)
+    metrics["balanced_accuracy"] = balanced_accuracy_score(true, pred)
+
+    metrics["f1"] = f1_score(true, pred, zero_division=0)
+    metrics["f1_macro"] = f1_score(
+        true,
+        pred,
+        average="macro",
+        zero_division=0,
+    )
+    metrics["f1_weighted"] = f1_score(
+        true,
+        pred,
+        average="weighted",
+        zero_division=0,
+    )
+
     try:
-        auc = roc_auc_score(true, prob)
+        metrics["auroc"] = roc_auc_score(true, prob)
     except ValueError:
-        auc = float('nan')
-    
+        metrics["auroc"] = float("nan")
+
+    try:
+        metrics["auprc"] = average_precision_score(true, prob)
+    except ValueError:
+        metrics["auprc"] = float("nan")
+
     if rules is not None:
         rules = rules.cpu()
-    return acc, f1, auc, rules
+
+    return metrics, rules
 
 
 def run_inner_hpo(
@@ -450,6 +497,7 @@ def run_inner_hpo(
     use_topo:bool,
     seed: int,
     Patience: int,
+    metric_name:str='auroc'
 ):
     """
     Runs inner Hyperparameter Optimization (HPO) via Optuna using a single 
@@ -514,7 +562,10 @@ def run_inner_hpo(
             model_kwargs["num_rules"] = data.topo_features.size(1)
             #print(f"num_rules = {data.topo_features.size(1)}")
         if use_kg and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
-            model_kwargs["num_rules"] = data.topo_features.size(1) + data.kg_scores.size(1)
+            kg_in_channels = 0
+            if hasattr(data, "kg_scores") and data.kg_scores is not None:
+                kg_in_channels = data.kg_scores.size(1)
+            model_kwargs["num_rules"] = data.topo_features.size(1) + kg_in_channels
             #print(f"num_rules = {model_kwargs['num_rules']}")
         
         model = get_model(
@@ -553,16 +604,16 @@ def run_inner_hpo(
                 )
                 scheduler.step()  # Fixed: stepped scheduler each epoch
 
-                val_acc, val_f1, val_auroc, rules = evaluate(
+                val_metrics, rules = evaluate(
                     model=model,
                     data=data,
                     mask=val_mask,
                     use_kg=use_kg,
                     use_topo=use_topo
                 )
-                
-                if val_f1 > best_score:
-                    best_score = val_f1
+                val_score = val_metrics[metric_name]
+                if val_score > best_score:
+                    best_score = val_score
                     best_state = {k: v.clone() for k, v in model.state_dict().items()}
                     patience_count = 0
                 else:
@@ -577,7 +628,7 @@ def run_inner_hpo(
             if best_state:
                 model.load_state_dict(best_state)
                 
-            acc, f1, auroc, rules = evaluate(
+            metrics, rules = evaluate(
                 model=model,
                 data=data,
                 mask=val_mask,
@@ -586,11 +637,7 @@ def run_inner_hpo(
             )
             
             trial_result = {
-                "metrics": {
-                    "val_f1": float(f1),
-                    "val_auroc": float(auroc),
-                    "val_accuracy": float(acc),
-                },
+                "metrics": metrics,
                 "params": trial.params
             }
             trial.set_user_attr("summary", trial_result)
@@ -707,8 +754,11 @@ def run_cv(
         # (4) Add Fuzzy/Topology-specific parameters if using fuzzy rules
         if use_kg is False and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
             model_kwargs["num_rules"] = data.topo_features.size(1)
-        if use_kg and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
-            model_kwargs["num_rules"] = data.topo_features.size(1) + data.kg_scores.size(1)
+        if use_kg and use_topo:
+            topo_rules = data.topo_features.size(1) if hasattr(data, "topo_features") and data.topo_features is not None else 0
+            kg_rules = data.kg_scores.size(1) if hasattr(data, "kg_scores") and data.kg_scores is not None else 0
+            if topo_rules + kg_rules > 0:
+                model_kwargs["num_rules"] = topo_rules + kg_rules
 
         model = get_model(
             model_type=model_type, 
@@ -746,11 +796,12 @@ def run_cv(
             fold_fuzzy_params.append(fuzzy_params)
 
         # Evaluate on the held-out test fold
-        acc, f1, auc, rules = evaluate(model, 
+        test_metrics, rules = evaluate(model, 
                                        d, 
                                        test_mask, 
                                        use_kg=use_kg,
                                        use_topo=use_topo)
+        acc, f1, auc = test_metrics['accuracy'], test_metrics['f1'], test_metrics['auroc']
         accs.append(acc)
         f1s.append(f1)
         aucs.append(auc)
