@@ -664,7 +664,7 @@ def run_cv(
     num_classes = max(labels)+1
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(np.zeros(n_patients), labels), 1):
-        print(f"\n--- Outer Fold {fold}/5 ---")
+        print(f"\n--- Outer Fold {fold}/{n_splits} ---")
         train_mask = torch.zeros(n_patients, dtype=torch.bool, device=device)
         test_mask = torch.zeros(n_patients, dtype=torch.bool, device=device)
         train_mask[train_idx] = True
