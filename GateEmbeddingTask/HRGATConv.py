@@ -6,9 +6,344 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch_geometric.utils import softmax
+from torch import Tensor
 from torch_scatter import scatter
+from torch_geometric.utils import softmax
 
+
+class HRGATConv(nn.Module):
+    """
+    Hierarchical Relational Graph Attention Layer
+
+    Level 1:
+        Within-relation edge attention
+
+    Level 2:
+        Across-relation semantic attention
+
+    Residual:
+        Learnable skip gate, following the idea of HGTConv:
+
+            out = alpha * aggregated + (1 - alpha) * residual
+
+        where:
+
+            alpha = sigmoid(skip[node_type])
+
+        The residual path uses a per-node-type projection so that
+        in_dim and out_dim do not need to be equal.
+    """
+
+    def __init__(
+        self,
+        metadata,
+        in_dim,
+        out_dim,
+        att_dim,
+        negative_slope=0.2,
+    ):
+        super().__init__()
+
+        self.node_types, self.edge_types = metadata
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.att_dim = att_dim
+        self.negative_slope = negative_slope
+
+        # Level 1: Relation-specific transformations
+        self.rel_lins = nn.ModuleDict()
+        self.rel_att = nn.ParameterDict()
+
+        for rel in self.edge_types:
+            rel_key = self.rel_to_key(rel)
+
+            # Relation-specific feature transformation W_r
+            self.rel_lins[rel_key] = nn.Linear(
+                in_dim,
+                out_dim,
+                bias=False,
+            )
+
+            # Relation-specific edge attention vector
+            self.rel_att[rel_key] = nn.Parameter(
+                torch.empty(2 * out_dim)
+            )
+
+        # Fallback projection: for node types that have no incoming relation.
+        self.fallback_lins = nn.ModuleDict({
+            node_type: nn.Linear(
+                in_dim,
+                out_dim,
+                bias=False,
+            )
+            for node_type in self.node_types
+        })
+
+        # Level 2: Semantic relation attention
+        # Query comes from the original destination-node feature.
+        self.query_lin = nn.Linear(
+            in_dim,
+            att_dim,
+            bias=False,
+        )
+
+        # Key comes from the relation-specific aggregated message.
+        self.key_lin = nn.Linear(
+            out_dim,
+            att_dim,
+            bias=False,
+        )
+
+        self.semantic_att = nn.Linear(
+            2 * att_dim,
+            1,
+            bias=False,
+        )
+
+        # Residual / skip gate connection of input and aggregated output
+
+        # Project input feature to out_dim when necessary.
+        # analogous to HGT's residual path, but unlike HGTConv, here support in_dim != out_dim.
+        self.skip_lins = nn.ModuleDict()
+
+        for node_type in self.node_types:
+            if in_dim == out_dim:
+                self.skip_lins[node_type] = nn.Identity()
+            else:
+                self.skip_lins[node_type] = nn.Linear(
+                    in_dim,
+                    out_dim,
+                    bias=False,
+                )
+
+        # One learnable scalar per node type: the same idea as HGTConv:
+        self.skip = nn.ParameterDict({
+            node_type: nn.Parameter(torch.empty(1))
+            for node_type in self.node_types
+        })
+
+        self.reset_parameters()
+
+    @staticmethod
+    def rel_to_key(rel):
+        return "__".join(rel)
+
+    def reset_parameters(self):
+        # Relation transformations
+        for lin in self.rel_lins.values():
+            lin.reset_parameters()
+
+        # Relation attention
+        for att in self.rel_att.values():
+            nn.init.xavier_uniform_(att.unsqueeze(0))
+
+        # Fallback transformations
+        for lin in self.fallback_lins.values():
+            lin.reset_parameters()
+
+        # Semantic attention
+        self.query_lin.reset_parameters()
+        self.key_lin.reset_parameters()
+        nn.init.xavier_uniform_(self.semantic_att.weight)
+
+        # Residual projections
+        for lin in self.skip_lins.values():
+            if isinstance(lin, nn.Linear):
+                lin.reset_parameters()
+
+        for node_type in self.skip:
+            nn.init.ones_(self.skip[node_type])
+
+    def relation_message_passing(
+        self,
+        x_src: Tensor,
+        x_dst: Tensor,
+        edge_index: Tensor,
+        rel_key: str,
+    ):
+        """
+        Level 1:
+            Within-relation edge attention.
+        """
+
+        row, col = edge_index
+        # attention
+        # Relation-specific transformation
+        x_src = self.rel_lins[rel_key](x_src)
+        x_dst = self.rel_lins[rel_key](x_dst)
+
+        edge_feat = torch.cat(
+            [x_src[row], x_dst[col]],
+            dim=-1,
+        )
+
+        alpha = (
+            edge_feat * self.rel_att[rel_key]
+        ).sum(dim=-1)
+
+        alpha = F.leaky_relu(
+            alpha,
+            negative_slope=self.negative_slope,
+        )
+
+        # Normalize over incoming neighbors of each destination node
+        alpha = softmax(alpha, col)
+
+        # Weighted message passing
+        msg = x_src[row] * alpha.unsqueeze(-1)
+        out = scatter(
+            msg,
+            col,
+            dim=0,
+            dim_size=x_dst.size(0),
+            reduce="sum",
+        )
+
+        return out
+
+    def apply_skip(self, node_type: str, x: Tensor, aggregated: Tensor,) -> Tensor:
+        """
+        HGT-style residual / skip gating.
+
+        aggregated:
+            Hierarchical relation-aware aggregation.
+
+        x:
+            Original destination-node input.
+
+        Returns:
+            alpha * aggregated + (1-alpha) * residual
+        """
+
+        # Project input to output dimension if needed.
+        residual = self.skip_lins[node_type](x)
+
+        # Learnable node-type-specific gate.
+        alpha = torch.sigmoid(self.skip[node_type])
+
+        return (alpha * aggregated + (1.0 - alpha) * residual)
+
+    def forward(self, x_dict, edge_index_dict,):
+
+        # Collect relation-wise messages
+        relation_outputs = {
+            node_type: []
+            for node_type in self.node_types
+        }
+
+        relation_names = {
+            node_type: []
+            for node_type in self.node_types
+        }
+
+     
+        # Level 1: Relation-wise propagation
+        for rel in self.edge_types:
+
+            src_type, edge_type, dst_type = rel
+            rel_key = self.rel_to_key(rel)
+
+            if rel not in edge_index_dict:
+                continue
+
+            edge_index = edge_index_dict[rel]
+
+            out = self.relation_message_passing(
+                x_src=x_dict[src_type],
+                x_dst=x_dict[dst_type],
+                edge_index=edge_index,
+                rel_key=rel_key,
+            )
+
+            relation_outputs[dst_type].append(out)
+            relation_names[dst_type].append(rel_key)
+
+        # Level 2: Semantic relation attention
+        out_dict = {}
+        semantic_attention_dict = {}
+
+        for node_type in self.node_types:
+
+            x = x_dict[node_type]
+
+            # No incoming relations
+            if len(relation_outputs[node_type]) == 0:
+
+                if node_type in x_dict:
+                    # Preserve the input by fallback projection.
+                    out = self.fallback_lins[node_type](x)
+
+                    out_dict[node_type] = out
+
+                    semantic_attention_dict[node_type] = {
+                        "relation_names": [],
+                        "attention": torch.zeros(
+                            x.size(0),
+                            0,
+                            device=x.device,
+                        ),
+                    }
+                continue
+
+            # Stack relation outputs: [N, R, out_dim]
+            rel_tensor = torch.stack(
+                relation_outputs[node_type],
+                dim=1,
+            )
+
+            N, R, D = rel_tensor.size()
+            # Semantic attention
+
+            # Query from original destination-node input: [N, att_dim]
+            query = self.query_lin(x)
+
+            # Keys from relation-specific outputs: [N, R, att_dim]
+            keys = self.key_lin(rel_tensor)
+
+            # Expand query over relations: [N, R, att_dim]
+            query = query.unsqueeze(1).expand(
+                -1,
+                R,
+                -1,
+            )
+
+            # [N, R, 2*att_dim]
+            att_input = torch.cat(
+                [query, keys],
+                dim=-1,
+            )
+            # [N, R]
+            beta = self.semantic_att(att_input).squeeze(-1)
+            beta = F.leaky_relu(
+                beta,
+                negative_slope=self.negative_slope,
+            )
+
+            # Normalize over relations
+            beta = F.softmax(beta,dim=1,)
+
+            # Semantic relation fusion: [N, out_dim]
+            aggregated = (
+                rel_tensor
+                * beta.unsqueeze(-1)
+            ).sum(dim=1)
+
+            # HGT-style residual / skip gate
+            out = self.apply_skip(
+                node_type=node_type,
+                x=x,
+                aggregated=aggregated,
+            )
+
+            out_dict[node_type] = out
+
+            semantic_attention_dict[node_type] = {
+                "relation_names": relation_names[node_type],
+                "attention": beta,
+            }
+
+        return out_dict, semantic_attention_dict
 
 class HRGATLayer(nn.Module):
     """
