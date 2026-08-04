@@ -107,3 +107,5 @@ utils/__pycache__
 nesy_gnn/__pycache__/
 nesy_gnn/.nfs000000004ed0080a000001cc
 data_processing/__pycache__/
+GateEmbeddingTask/HRGNN/__pycache__/
+

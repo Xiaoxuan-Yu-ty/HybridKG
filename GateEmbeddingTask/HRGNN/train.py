@@ -178,8 +178,8 @@ def convert_to_hetero_data(G: nx.MultiDiGraph, kg_scores, kg_scores_direct):
     topo_features = np.vstack([topological_features[name] for name in feature_names]).T
     scaler_topo = StandardScaler()
     topo_features = scaler_topo.fit_transform(topo_features)
-    data['Patient'].topo_features=torch.tensor(topo_features, dtype=torch.float),
-    data['Patient'].topo_scaler_mean=torch.tensor(scaler_topo.mean_, dtype=torch.float),
+    data['Patient'].topo_features=torch.tensor(topo_features, dtype=torch.float)
+    data['Patient'].topo_scaler_mean=torch.tensor(scaler_topo.mean_, dtype=torch.float)
     data['Patient'].topo_scaler_scale=torch.tensor(scaler_topo.scale_, dtype=torch.float)
 
     # 3. Process ALL Node Types
@@ -393,7 +393,6 @@ def train_epoch(model:HRGNNModel,
                 data, 
                 optimizer, 
                 train_mask:torch.Tensor,
-                device,
                 rule_features=None,
                 ):
     model.train()
@@ -591,7 +590,6 @@ def run_inner_hpo(
                     data=data,
                     train_mask=train_mask,
                     optimizer=optimizer,
-                    device=device,
                     rule_features=rule_features
                 )
                 scheduler.step()  # stepped scheduler each epoch
@@ -668,7 +666,8 @@ def run_cv(
     num_trial: int,
     n_jobs: int,
     n_splits:int,
-    Patience: int
+    Patience: int,
+    metric_name:str,
 ):
     """
     Executes a Stratified 5-Fold Cross-Validation loop incorporating inner HPO 
@@ -697,8 +696,8 @@ def run_cv(
     
     # Ensure data is fully on the target device upfront
     d = data.to(device)
-    n_patients = d.x.size(0)
-    labels = d.y.cpu().numpy()
+    n_patients = d['Patient'].x.size(0)
+    labels = d['Patient'].y.cpu().numpy()
     num_classes = max(labels)+1
 
     for fold, (train_idx, test_idx) in enumerate(skf.split(np.zeros(n_patients), labels), 1):
@@ -717,7 +716,7 @@ def run_cv(
             n_jobs=n_jobs,
             device=device,
             trainval_idx=train_idx,
-            y_all=d.y,
+            y_all=labels,
             num_patients=n_patients,
             num_classes=num_classes,
             outer_fold=fold,
@@ -726,7 +725,8 @@ def run_cv(
             use_all_kg = use_all_kg,
             use_topo=use_topo,
             seed=seed,
-            Patience=Patience
+            Patience=Patience,
+            metric_name=metric_name,
         )
         
         # Initialize final model with best parameters
@@ -777,7 +777,6 @@ def run_cv(
                                 data=data,
                                 train_mask=train_mask,
                                 optimizer=optimizer,
-                                device=device,
                                 rule_features=rule_features
                             )
             in_fold_train_loss.append(train_loss)

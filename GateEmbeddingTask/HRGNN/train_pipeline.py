@@ -61,7 +61,7 @@ def parse():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
-    parser.add_argument("--num_trial", type=int, default=100, help="Number of HPO trials")
+    parser.add_argument("--num_trial", type=int, default=50, help="Number of HPO trials")
     parser.add_argument("--n_splits", type=int, default=3, choices=[2,3,5], help="Number of CV splits")
     parser.add_argument("--n_jobs", type=int, default=1)
 
@@ -101,7 +101,7 @@ def main():
         design['Target'] = design['Target'].map({'Control':0, 'Disease':1})
 
     # Output dir
-    network_output = os.path.join(args.output_dir, args.dataset, args.DiseaseKG,
+    network_output = os.path.join(args.output_dir, args.dataset, args.DiseaseKG, args.graph_method,
                                 f'{args.scoring}_{args.threshold}')
     os.makedirs(network_output, exist_ok=True)
 
@@ -163,9 +163,9 @@ def main():
                                                          kg_scores=kg_scores, 
                                                          kg_scores_direct=kg_scores_direct,)
     # merge edge_types
-    new_data = build_data_dict(initial_data)
+    new_data = merge_patient_protein_edges(initial_data)
 
-    data = merge_patient_protein_edges(new_data)
+    data = build_data_dict(new_data)
     data.to(device)
 
     final_output_dir = os.path.join(network_output, args.model)
@@ -175,7 +175,7 @@ def main():
     results = {}
     # use BaselineGNN
     print(f"\nRun CV-HPO on Baseline{args.model}")
-    results[f'{args.model_type}'] = run_cv(data=data,
+    results[f'{args.model}'] = run_cv(data=data,
                                             model_type=args.model,
                                             device=device,
                                             db_url=f"sqlite:///{final_output_dir}/base_optuna.db",
@@ -187,10 +187,16 @@ def main():
                                             num_trial=args.num_trial,
                                             n_jobs=args.n_jobs,
                                             n_splits=args.n_splits,
-                                            Patience=50)
+                                            Patience=50,
+                                            metric_name='auroc')
+    save_result = os.path.join(final_output_dir,'results.pkl')
+    with open(save_result,'wb') as f:
+        pickle.dump(results, f)
+    print(f"All results per fold saved to {save_result}")
+    
     # use FuzzyGNN with topological features
     print(f"\nRun CV-HPO on Fuzzy{args.model}")
-    results[f'Fuzzy{args.model_type}'] = run_cv(data=data,
+    results[f'Fuzzy{args.model}'] = run_cv(data=data,
                                                 model_type=args.model,
                                                 device=device,
                                                 db_url=f"sqlite:///{final_output_dir}/Fuzzy_optuna.db",
@@ -202,10 +208,16 @@ def main():
                                                 num_trial=args.num_trial,
                                                 n_jobs=args.n_jobs,
                                                 n_splits=args.n_splits,
-                                                Patience=50)
+                                                Patience=50,
+                                                metric_name='auroc')
+    save_result = os.path.join(final_output_dir,'results.pkl')
+    with open(save_result,'wb') as f:
+        pickle.dump(results, f)
+    print(f"All results per fold saved to {save_result}")
+
     # FuzzyGNN with TopoFeatures + direct_KGRules
     print(f"\nRun CV-HPO on Fuzzy{args.model}: topo_features + direct_kg_scores")
-    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data,
+    results[f'Fuzzy{args.model}_all_rules'] = run_cv(data=data,
                                                         model_type=args.model,
                                                         device=device,
                                                         db_url=f"sqlite:///{final_output_dir}/FuzzyDirectKGRules_optuna.db",
@@ -217,11 +229,16 @@ def main():
                                                         num_trial=args.num_trial,
                                                         n_jobs=args.n_jobs,
                                                         n_splits=args.n_splits,
-                                                        Patience=50)
+                                                        Patience=50,
+                                                        metric_name='auroc')
+    save_result = os.path.join(final_output_dir,'results.pkl')
+    with open(save_result,'wb') as f:
+        pickle.dump(results, f)
+    print(f"All results per fold saved to {save_result}")
     # FuzzyGNN with TopoFeatures + KGRules
     print(f"\nRun CV-HPO on Fuzzy{args.model}: topo_features + kg_scores")
-    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data,
-                                                        model_type=args.model_type,
+    results[f'Fuzzy{args.model}_all_rules'] = run_cv(data=data,
+                                                        model_type=args.model,
                                                         device=device,
                                                         db_url=f"sqlite:///{final_output_dir}/FuzzyKGRules_optuna.db",
                                                         use_direct_kg=False,
@@ -232,37 +249,29 @@ def main():
                                                         num_trial=args.num_trial,
                                                         n_jobs=args.n_jobs,
                                                         n_splits=args.n_splits,
-                                                        Patience=50)
+                                                        Patience=50,
+                                                        metric_name='auroc')
 
     # 4. Save data
+    save_result = os.path.join(final_output_dir,'results.pkl')
+    with open(save_result,'wb') as f:
+        pickle.dump(results, f)
+    print(f"All results per fold saved to {save_result}")
+
     # (1) Prepare Summary Dataframe for Metrics
     long_format_rows = []
     detailed_rules_store = {}
     detailed_params_store = {}
+    retrain_history = {}
 
     for model_name, res in results.items():
         # res['accuracy'], res['f1'], res['auc'] are now lists per fold
-        accs = res['accuracy']
-        acc_weighted = res['balanced_accuracy']
-        f1s = res['f1']
-        f1_macros = res['f1_macro']
-        f1_weighted = res['f1_weighted']
-        aucs = res['auroc']
-        auprcs = res['auprc']
-
-        
-        # Iterate through each fold to capture individual metric data points
-        for fold_idx, (acc, weight_acc, f1, f1_ma, f1_we, auroc, auprc) in enumerate(zip(accs, acc_weighted, f1s, f1_macros, f1_weighted, aucs, auprcs), 1):
+        res_metrics = res['fold_test_metrics']
+        for fold_idx, metrics in enumerate(res_metrics):
             long_format_rows.append({
                 'model': model_name,
                 'fold': fold_idx,
-                'accuracy': float(acc),
-                'balanced_accuracy': float(weight_acc),
-                'f1': float(f1),
-                'f1_macro': float(f1_ma),
-                'f1_weighted': float(f1_we),
-                'auroc': float(auroc) if not np.isnan(auroc) else np.nan,
-                'auprc': float(auprc)
+                **metrics
             })
         
         # Store complex/non-scalar fold data (rules, parameters) separately
@@ -270,6 +279,8 @@ def main():
             detailed_rules_store[model_name] = res['fuzzy_rules']
         if 'fuzzy_params' in res and any(p is not None for p in res['fuzzy_params']):
             detailed_params_store[model_name] = res['fuzzy_params']
+        if 'fold_train_loss' in res:
+            retrain_history[model_name] = res['fold_train_loss']
 
     # Create the long-format DataFrame
     metrics_df = pd.DataFrame(long_format_rows)
@@ -299,6 +310,11 @@ def main():
         with open(params_file, 'wb') as f:
             pickle.dump(detailed_params_store, f)
         print(f'Fuzzy rule parameters ($\theta, \alpha$) per fold saved to {params_file}')
+    if retrain_history:
+        loss_file = os.path.join(final_output_dir,'cvfold_train_loss.pkl')
+        with open(loss_file, 'wb') as f:
+            pickle.dump(loss_file, f)
+        print(f"Training losses history per fold saved to {loss_file}")
 
 if __name__ == "__main__":
     main()

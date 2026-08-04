@@ -109,7 +109,7 @@ class HRGAT(BaseHeteroEncoder):
             attention_weights.append(att_dict)
             if i < self.num_layers-1:
                 x_dict = self._normalize(x_dict,layer_idx=i)
-                x_dict = self._apply_activation_dropout(x_dict)
+                x_dict = self._activate_dropout(x_dict)
         
         return x_dict, attention_weights
 
@@ -142,7 +142,7 @@ class HRGCN(BaseHeteroEncoder):
             attention_weights.append(att_dict)
             if i < self.num_layers-1:
                             x_dict = self._normalize(x_dict,layer_idx=i)
-                            x_dict = self._apply_activation_dropout(x_dict)
+                            x_dict = self._activate_dropout(x_dict)
         
         return x_dict, attention_weights
 
