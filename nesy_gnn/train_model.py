@@ -706,6 +706,7 @@ def run_cv(
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True,random_state=seed)
     accs, f1s, aucs = [], [], []
     fold_rules, fold_fuzzy_params = [], []
+    fold_metrics = []
     
     # Ensure data is fully on the target device upfront
     d = data.to(device)
@@ -804,6 +805,7 @@ def run_cv(
                                        test_mask, 
                                        use_kg=use_kg,
                                        use_topo=use_topo)
+        fold_metrics.append(test_metrics)
         acc, f1, auc = test_metrics['accuracy'], test_metrics['f1'], test_metrics['auroc']
         accs.append(acc)
         f1s.append(f1)
@@ -816,4 +818,4 @@ def run_cv(
     print(f'  F1 (AD)  : {np.mean(f1s):.3f} ± {np.std(f1s):.3f}')
     print(f'  AUC      : {np.nanmean(aucs):.3f} ± {np.nanstd(aucs):.3f}')
 
-    return {'accuracy': accs, 'f1': f1s, 'auc': aucs, 'fuzzy_rules':fold_rules, 'fuzzy_params':fold_fuzzy_params}
+    return {'fold_test_metrics':fold_metrics, 'fuzzy_rules':fold_rules, 'fuzzy_params':fold_fuzzy_params}

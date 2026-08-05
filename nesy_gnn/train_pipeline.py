@@ -43,9 +43,9 @@ def parse():
                         help='K Neareast Neighbor used in generating patient graph')
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results")
+    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/updated")
     parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
-    parser.add_argument('--model_type', type=str, default='GIN', choices=['GAT', 'GCN', 'GIN'])
+    parser.add_argument('--model_type', type=str, default='GCN', choices=['GAT', 'GCN', 'GIN'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  
     # Model parameters
@@ -145,11 +145,11 @@ def main():
                                                    n_splits=args.n_splits,
                                                    Patience=50)
     # FuzzyGNN with TopoFeatures + KGRules
-    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_scores")
-    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_direct,
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_direct_scores")
+    results[f'Fuzzy{args.model_type}_direct_rules'] = run_cv(data=data_direct,
                                                    model_type=args.model_type,
                                                    device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/FuzzyKGRules_optuna.db",
+                                                   db_url=f"sqlite:///{final_output_dir}/FuzzyDirectKGRules_optuna.db",
                                                    use_kg=True,
                                                    use_topo=True,
                                                    seed = args.seed,
@@ -158,62 +158,66 @@ def main():
                                                    n_jobs=args.n_jobs,
                                                    n_splits=args.n_splits,
                                                    Patience=50)
-    # KGRuleGNN with rules
-    print(f"\nRun CV-HPO on KGRule{args.model_type}: direct rules")
-    results[f'KGRules{args.model_type}_direct_rules'] = run_cv(data=data_direct,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/directRules_optuna.db",
-                                                   use_kg=True,
-                                                   use_topo=False,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50,)
-    print(f"\nRun CV-HPO on KGRule{args.model_type}: all rules")
-    results[f'KGRules{args.model_type}_all_rules'] = run_cv(data=data_all,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/allRules_optuna.db",
-                                                   use_kg=True,
-                                                   use_topo=False,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50)
+    # FuzzyGNN with TopoFeatures + all KGRules
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_all_scores")
+    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_all,
+                                                    model_type=args.model_type,
+                                                    device=device,
+                                                    db_url=f"sqlite:///{final_output_dir}/FuzzyAllKGRules_optuna.db",
+                                                    use_kg=True,
+                                                    use_topo=True,
+                                                    seed = args.seed,
+                                                    epochs=args.epochs,
+                                                    num_trial=args.num_trial,
+                                                    n_jobs=args.n_jobs,
+                                                    n_splits=args.n_splits,
+                                                    Patience=50)
+    # # KGRuleGNN with rules
+    # print(f"\nRun CV-HPO on KGRule{args.model_type}: direct rules")
+    # results[f'KGRules{args.model_type}_direct_rules'] = run_cv(data=data_direct,
+    #                                                model_type=args.model_type,
+    #                                                device=device,
+    #                                                db_url=f"sqlite:///{final_output_dir}/directRules_optuna.db",
+    #                                                use_kg=True,
+    #                                                use_topo=False,
+    #                                                seed = args.seed,
+    #                                                epochs=args.epochs,
+    #                                                num_trial=args.num_trial,
+    #                                                n_jobs=args.n_jobs,
+    #                                                n_splits=args.n_splits,
+    #                                                Patience=50,)
+    # print(f"\nRun CV-HPO on KGRule{args.model_type}: all rules")
+    # results[f'KGRules{args.model_type}_all_rules'] = run_cv(data=data_all,
+    #                                                model_type=args.model_type,
+    #                                                device=device,
+    #                                                db_url=f"sqlite:///{final_output_dir}/allRules_optuna.db",
+    #                                                use_kg=True,
+    #                                                use_topo=False,
+    #                                                seed = args.seed,
+    #                                                epochs=args.epochs,
+    #                                                num_trial=args.num_trial,
+    #                                                n_jobs=args.n_jobs,
+    #                                                n_splits=args.n_splits,
+    #                                                Patience=50)
     # 3. Save data
     # (1) Prepare Summary Dataframe for Metrics
+    save_result = os.path.join(final_output_dir,'results.pkl')
+    with open(save_result,'wb') as f:
+        pickle.dump(results, f)
+    print(f"All results per fold saved to {save_result}")
+
     long_format_rows = []
     detailed_rules_store = {}
     detailed_params_store = {}
 
     for model_name, res in results.items():
         # res['accuracy'], res['f1'], res['auc'] are now lists per fold
-        accs = res['accuracy']
-        acc_weighted = res['balanced_accuracy']
-        f1s = res['f1']
-        f1_macros = res['f1_macro']
-        f1_weighted = res['f1_weighted']
-        aucs = res['auroc']
-        auprcs = res['auprc']
-
-        
-        # Iterate through each fold to capture individual metric data points
-        for fold_idx, (acc, weight_acc, f1, f1_ma, f1_we, auroc, auprc) in enumerate(zip(accs, acc_weighted, f1s, f1_macros, f1_weighted, aucs, auprcs), 1):
+        res_metrics = res['fold_test_metrics']
+        for fold_idx, metrics in enumerate(res_metrics):
             long_format_rows.append({
                 'model': model_name,
                 'fold': fold_idx,
-                'accuracy': float(acc),
-                'balanced_accuracy': float(weight_acc),
-                'f1': float(f1),
-                'f1_macro': float(f1_ma),
-                'f1_weighted': float(f1_we),
-                'auroc': float(auroc) if not np.isnan(auroc) else np.nan,
-                'auprc': float(auprc)
+                **metrics
             })
         
         # Store complex/non-scalar fold data (rules, parameters) separately
@@ -230,7 +234,7 @@ def main():
     print(f'{"Model":<30} {"Fold":>6} {"Accuracy":>10} {"F1":>9} {"AUC":>8}')
     print('-'*65)
     for _, row in metrics_df.iterrows():
-        print(f"{row['model']:<30} {row['fold']:>6} {row['accuracy']:>10.3f} {row['f1']:>9.3f} {row['auc']:>8.3f}")
+        print(f"{row['model']:<30} {row['fold']:>6} {row['accuracy']:>10.3f} {row['f1']:>9.3f} {row['auroc']:>8.3f}")
     print('='*65)
 
     # (2) Save the full fold-level metrics to CSV for Seaborn Boxplots
