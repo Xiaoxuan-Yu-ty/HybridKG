@@ -4,12 +4,12 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("ADNI" "AdNeuralMed")
+DATASETS=("ANMerge" "ADNI" "AdNeuralMed")
 K_VALUES=(4 8 12 16 20)
 MODELS=("GAT" "GCN" "GIN")
 
 # Base directory for outputs
-OUTPUT_DIR="./nesy_gnn/results"
+OUTPUT_DIR="./nesy_gnn/results/updated"
 KG_PATH="./data/KG/ad_network_with_reverse_edges.pkl"
 KG_NAME="AD_KG"
 
@@ -56,7 +56,7 @@ for dataset in "${DATASETS[@]}"; do
                 --use_kg \
                 --num_trial 100 \
                 --n_jobs 1 \
-                --n_splits 3 \
+                --n_splits 5 \
                 --epochs 200 \
                 --seed 42
 

@@ -43,7 +43,7 @@ def parse():
                         help='K Neareast Neighbor used in generating patient graph')
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results")
+    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/updated")
     parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
     parser.add_argument('--model_type', type=str, default='GIN', choices=['GAT', 'GCN', 'GIN'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
@@ -59,7 +59,7 @@ def parse():
     # General Optimizer Settings
     parser.add_argument("--num_trial", type=int, default=50, help="Number of trials for HPO process.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of jobs in Optuna HPO process.")
-    parser.add_argument("--n_splits", type=int, default=3, help="The number of splits in CV HPO")
+    parser.add_argument("--n_splits", type=int, default=5, help="The number of splits in CV HPO")
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -107,8 +107,8 @@ def main():
         k=args.k, 
         out_dir=graph_output, 
         metric= 'cosine',
-        logfc= True, # use log2fc transformed expression scores as input features
-        KGRule= False # not only use genes in KGRules
+        normalized= True, # use zscore normalized expression scores as input features
+        KGRule= False # only use genes in KGRules as input features
     )
     data_all      = build_pyg_data(G, use_direct_rules=False)
     data_direct   = build_pyg_data(G, use_direct_rules=True)
@@ -119,72 +119,87 @@ def main():
     # use BaselineGNN
     print(f"\nRun CV-HPO on Baseline{args.model_type}")
     results[f'{args.model_type}'] = run_cv(data=data_direct,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/base_optuna.db",
-                                                   use_kg=False,
-                                                   use_topo=False,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50)
+                                            model_type=args.model_type,
+                                            device=device,
+                                            db_url=f"sqlite:///{final_output_dir}/base_optuna.db",
+                                            use_kg=False,
+                                            use_topo=False,
+                                            seed = args.seed,
+                                            epochs=args.epochs,
+                                            num_trial=args.num_trial,
+                                            n_jobs=args.n_jobs,
+                                            n_splits=args.n_splits,
+                                            Patience=50)
     # use FuzzyGNN with topological features
     print(f"\nRun CV-HPO on Fuzzy{args.model_type}")
     results[f'Fuzzy{args.model_type}'] = run_cv(data=data_direct,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/Fuzzy_optuna.db",
-                                                   use_kg=False,
-                                                   use_topo=True,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50)
+                                                model_type=args.model_type,
+                                                device=device,
+                                                db_url=f"sqlite:///{final_output_dir}/Fuzzy_optuna.db",
+                                                use_kg=False,
+                                                use_topo=True,
+                                                seed = args.seed,
+                                                epochs=args.epochs,
+                                                num_trial=args.num_trial,
+                                                n_jobs=args.n_jobs,
+                                                n_splits=args.n_splits,
+                                                Patience=50)
     # FuzzyGNN with TopoFeatures + KGRules
     print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_scores")
-    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_direct,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/FuzzyKGRules_optuna.db",
-                                                   use_kg=True,
-                                                   use_topo=True,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50)
-    # KGRuleGNN with rules
-    print(f"\nRun CV-HPO on KGRule{args.model_type}: direct rules")
-    results[f'KGRules{args.model_type}_direct_rules'] = run_cv(data=data_direct,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/directRules_optuna.db",
-                                                   use_kg=True,
-                                                   use_topo=False,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50,)
-    print(f"\nRun CV-HPO on KGRule{args.model_type}: all rules")
-    results[f'KGRules{args.model_type}_all_rules'] = run_cv(data=data_all,
-                                                   model_type=args.model_type,
-                                                   device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/allRules_optuna.db",
-                                                   use_kg=True,
-                                                   use_topo=False,
-                                                   seed = args.seed,
-                                                   epochs=args.epochs,
-                                                   num_trial=args.num_trial,
-                                                   n_jobs=args.n_jobs,
-                                                   n_splits=args.n_splits,
-                                                   Patience=50)
+    results[f'Fuzzy{args.model_type}_direct_rules'] = run_cv(data=data_direct,
+                                                            model_type=args.model_type,
+                                                            device=device,
+                                                            db_url=f"sqlite:///{final_output_dir}/FuzzyDirectRules_optuna.db",
+                                                            use_kg=True,
+                                                            use_topo=True,
+                                                            seed = args.seed,
+                                                            epochs=args.epochs,
+                                                            num_trial=args.num_trial,
+                                                            n_jobs=args.n_jobs,
+                                                            n_splits=args.n_splits,
+                                                            Patience=50)
+    # FuzzyGNN with TopoFeatures + KGRules
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_scores")
+    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_all,
+                                                        model_type=args.model_type,
+                                                        device=device,
+                                                        db_url=f"sqlite:///{final_output_dir}/FuzzyAllRules_optuna.db",
+                                                        use_kg=True,
+                                                        use_topo=True,
+                                                        seed = args.seed,
+                                                        epochs=args.epochs,
+                                                        num_trial=args.num_trial,
+                                                        n_jobs=args.n_jobs,
+                                                        n_splits=args.n_splits,
+                                                        Patience=50)
+    # # KGRuleGNN with rules
+    # print(f"\nRun CV-HPO on KGRule{args.model_type}: direct rules")
+    # results[f'KGRules{args.model_type}_direct_rules'] = run_cv(data=data_direct,
+    #                                                model_type=args.model_type,
+    #                                                device=device,
+    #                                                db_url=f"sqlite:///{final_output_dir}/directRules_optuna.db",
+    #                                                use_kg=True,
+    #                                                use_topo=False,
+    #                                                seed = args.seed,
+    #                                                epochs=args.epochs,
+    #                                                num_trial=args.num_trial,
+    #                                                n_jobs=args.n_jobs,
+    #                                                n_splits=args.n_splits,
+    #                                                Patience=50,)
+    # print(f"\nRun CV-HPO on KGRule{args.model_type}: all rules")
+    # results[f'KGRules{args.model_type}_all_rules'] = run_cv(data=data_all,
+    #                                                model_type=args.model_type,
+    #                                                device=device,
+    #                                                db_url=f"sqlite:///{final_output_dir}/allRules_optuna.db",
+    #                                                use_kg=True,
+    #                                                use_topo=False,
+    #                                                seed = args.seed,
+    #                                                epochs=args.epochs,
+    #                                                num_trial=args.num_trial,
+    #                                                n_jobs=args.n_jobs,
+    #                                                n_splits=args.n_splits,
+    #                                                Patience=50)
+
     # 3. Save data
     # (1) Prepare Summary Dataframe for Metrics
     long_format_rows = []
@@ -201,7 +216,6 @@ def main():
         aucs = res['auroc']
         auprcs = res['auprc']
 
-        
         # Iterate through each fold to capture individual metric data points
         for fold_idx, (acc, weight_acc, f1, f1_ma, f1_we, auroc, auprc) in enumerate(zip(accs, acc_weighted, f1s, f1_macros, f1_weighted, aucs, auprcs), 1):
             long_format_rows.append({

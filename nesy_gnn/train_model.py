@@ -244,8 +244,8 @@ def build_patient_graph(
     k: int, 
     out_dir: str, 
     metric: str = 'cosine',
-    logfc: bool = True,
-    KGRule: bool = True
+    normalized: bool = True,
+    KGRule: bool = False
 ):
     """
     Constructs a patient similarity K-NN graph, attaches multi-modal node attributes 
@@ -259,8 +259,8 @@ def build_patient_graph(
         k (int): Number of nearest neighbors for graph construction.
         out_dir (str): Directory path to save the output graph and metadata.
         metric (str): Distance metric for K-NN (e.g., 'cosine', 'euclidean'). Defaults to 'cosine'.
-        logfc (bool): Whether to use log-fold change. Defaults to True.
-        KGRule (bool): Whether to use KG rule filtering. Defaults to True.
+        normalized (bool): Whether to use z-score normalized expression data as feature. Defaults to True.
+        KGRule (bool): Whether to use KG rule associated gene expression as features. Defaults to False.
 
     Returns:
         nx.Graph: The constructed NetworkX patient graph.
@@ -276,7 +276,7 @@ def build_patient_graph(
         exp_df, 
         ctl_ids,
         patients,
-        z_norm=logfc, 
+        z_norm=normalized, 
         KGRule=KGRule
     )
 
@@ -602,7 +602,7 @@ def run_inner_hpo(
                     use_kg=use_kg,
                     use_topo=use_topo
                 )
-                scheduler.step()  # Fixed: stepped scheduler each epoch
+                scheduler.step()  # stepped scheduler each epoch
 
                 val_metrics, rules = evaluate(
                     model=model,
@@ -678,7 +678,8 @@ def run_cv(
     num_trial: int,
     n_jobs: int,
     n_splits:int,
-    Patience: int
+    Patience: int,
+    metric_name='auroc',
 ):
     """
     Executes a Stratified 5-Fold Cross-Validation loop incorporating inner HPO 
@@ -734,7 +735,8 @@ def run_cv(
             use_kg=use_kg,
             use_topo=use_topo,
             seed=seed,
-            Patience=Patience
+            Patience=Patience,
+            metric_name=metric_name,
         )
         
         # Initialize final model with best parameters
