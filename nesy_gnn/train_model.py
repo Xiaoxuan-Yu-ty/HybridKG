@@ -9,6 +9,8 @@ Compares:
 import gc
 import json
 import sys, os, pickle
+from typing import Optional
+
 import networkx as nx
 from tqdm import tqdm
 
@@ -125,7 +127,7 @@ def compute_kg_rule_scores(exp_df, rules):
         return pd.DataFrame(index=patients)
     return pd.DataFrame(scores, index=patients)
 
-def compute_topological_features(G):
+def compute_topological_features(G, nodes: Optional[list] = None):
     """
     Compute topological features for all nodes in the graph.
     
@@ -136,10 +138,13 @@ def compute_topological_features(G):
         dict: Dictionary containing topological features for each node
     """
     print("Computing topological features...")
+
+    if nodes is None:
+        nodes = list(G.nodes())
     
     # Basic features
-    degrees = np.array([G.degree(n) for n in G.nodes()])
-    clustering = np.array([nx.clustering(G, n) for n in G.nodes()])
+    degrees = np.array([G.degree(n) for n in nodes])
+    clustering = np.array([nx.clustering(G, n) for n in nodes])
     
     # Centrality measures
     eigenvector_centrality = np.array(list(nx.eigenvector_centrality(G, weight='weight', max_iter=1000).values()))
@@ -166,7 +171,6 @@ def compute_topological_features(G):
 def get_patient_features(
     kg_path: str, 
     exp_df: pd.DataFrame, 
-    ctl_ids:list,
     patients: list,
     z_norm: bool = True, 
     KGRule: bool = True
@@ -244,8 +248,8 @@ def build_patient_graph(
     k: int, 
     out_dir: str, 
     metric: str = 'cosine',
-    normalized: bool = True,
-    KGRule: bool = False
+    z_norm: bool = True,
+    KGRule: bool = True
 ):
     """
     Constructs a patient similarity K-NN graph, attaches multi-modal node attributes 
@@ -274,9 +278,8 @@ def build_patient_graph(
     features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df = get_patient_features(
         kg_path, 
         exp_df, 
-        ctl_ids,
         patients,
-        z_norm=normalized, 
+        z_norm=z_norm, 
         KGRule=KGRule
     )
 
@@ -704,6 +707,7 @@ def run_cv(
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True,random_state=seed)
     accs, f1s, aucs = [], [], []
     fold_rules, fold_fuzzy_params = [], []
+    fold_metrics = []
     
     # Ensure data is fully on the target device upfront
     d = data.to(device)
@@ -803,6 +807,7 @@ def run_cv(
                                        test_mask, 
                                        use_kg=use_kg,
                                        use_topo=use_topo)
+        fold_metrics.append(test_metrics)
         acc, f1, auc = test_metrics['accuracy'], test_metrics['f1'], test_metrics['auroc']
         accs.append(acc)
         f1s.append(f1)
@@ -815,4 +820,4 @@ def run_cv(
     print(f'  F1 (AD)  : {np.mean(f1s):.3f} ± {np.std(f1s):.3f}')
     print(f'  AUC      : {np.nanmean(aucs):.3f} ± {np.nanstd(aucs):.3f}')
 
-    return {'accuracy': accs, 'f1': f1s, 'auc': aucs, 'fuzzy_rules':fold_rules, 'fuzzy_params':fold_fuzzy_params}
+    return {'fold_test_metrics':fold_metrics, 'fuzzy_rules':fold_rules, 'fuzzy_params':fold_fuzzy_params}

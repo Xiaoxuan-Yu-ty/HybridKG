@@ -410,6 +410,7 @@ def process_and_save(
     do_function,
     output_dir: str,
     method: str = 'logfc',
+    control_based = False,
     **kwards
 ):
     """
@@ -429,7 +430,7 @@ def process_and_save(
                                             design=design, 
                                             threshold=threshold, 
                                             control=control, 
-                                            control_based=True)
+                                            control_based=control_based)
         
         pbar.update(1)
         
