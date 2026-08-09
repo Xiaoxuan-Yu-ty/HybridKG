@@ -45,7 +45,7 @@ def parse():
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
     parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/updated")
     parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
-    parser.add_argument('--model_type', type=str, default='GCN', choices=['GAT', 'GCN', 'GIN'])
+    parser.add_argument('--model_type', type=str, default='GCN', choices=['GAT', 'GCN', 'GIN','FuzzyNN'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  
     # Model parameters
@@ -107,33 +107,40 @@ def main():
         k=args.k, 
         out_dir=graph_output, 
         metric= 'cosine',
-        z_norm= True, # use log2fc transformed expression scores as input features
-        KGRule= False # not only use genes in KGRules
+        z_norm=True, # use log2fc transformed expression scores as input features
+        KGRule=False # not only use genes in KGRules
     )
     data_all      = build_pyg_data(G, use_direct_rules=False)
     data_direct   = build_pyg_data(G, use_direct_rules=True)
 
     # 2. HPO
-    
+    topo_features = ['degrees', 'clustering', 'eigenvector_centrality', 'degree_centrality', 'avg_edge_weight']
     results= {}
-    # use BaselineGNN
-    print(f"\nRun CV-HPO on Baseline{args.model_type}")
-    results[f'{args.model_type}'] = run_cv(data=data_direct,
-                                            model_type=args.model_type,
-                                            device=device,
-                                            db_url=f"sqlite:///{final_output_dir}/base_optuna.db",
-                                            use_kg=False,
-                                            use_topo=False,
-                                            seed = args.seed,
-                                            epochs=args.epochs,
-                                            num_trial=args.num_trial,
-                                            n_jobs=args.n_jobs,
-                                            n_splits=args.n_splits,
-                                            Patience=50)
+    if args.model_type != 'FuzzyNN':
+        # use BaselineGNN
+        print(f"\nRun CV-HPO on Baseline{args.model_type}")
+        results[f'{args.model_type}'] = run_cv(data=data_direct,
+                                                model_type=args.model_type,
+                                                meta=meta,
+                                                rule_features=None,
+                                                rule_names=[],
+                                                device=device,
+                                                db_url=f"sqlite:///{final_output_dir}/base_optuna.db",
+                                                use_kg=False,
+                                                use_topo=False,
+                                                seed = args.seed,
+                                                epochs=args.epochs,
+                                                num_trial=args.num_trial,
+                                                n_jobs=args.n_jobs,
+                                                n_splits=args.n_splits,
+                                                Patience=50)
     # use FuzzyGNN with topological features
     print(f"\nRun CV-HPO on Fuzzy{args.model_type}")
-    results[f'Fuzzy{args.model_type}'] = run_cv(data=data_direct,
+    results[f'Fuzzy{args.model_type}_topo'] = run_cv(data=data_direct,
                                                 model_type=args.model_type,
+                                                meta=meta,
+                                                rule_features=data_direct.topo_features,
+                                                rule_names=topo_features,
                                                 device=device,
                                                 db_url=f"sqlite:///{final_output_dir}/Fuzzy_optuna.db",
                                                 use_kg=False,
@@ -144,12 +151,51 @@ def main():
                                                 n_jobs=args.n_jobs,
                                                 n_splits=args.n_splits,
                                                 Patience=50)
+    # FuzzyGNN with KGRules
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: kg_direct_scores")
+    results[f'Fuzzy{args.model_type}_direct_rules'] = run_cv(data=data_direct,
+                                                    model_type=args.model_type,
+                                                    meta=meta,
+                                                    rule_features= data_direct.kg_scores,
+                                                    rule_names=meta['direct_rule_names'],
+                                                    device=device,
+                                                    db_url=f"sqlite:///{final_output_dir}/FuzzyDirectKGRules_optuna.db",
+                                                    use_kg=True,
+                                                    use_topo=False,
+                                                    seed = args.seed,
+                                                    epochs=args.epochs,
+                                                    num_trial=args.num_trial,
+                                                    n_jobs=args.n_jobs,
+                                                    n_splits=args.n_splits,
+                                                    Patience=50)
+    # FuzzyGNN with TopoFeatures + all KGRules
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_all_scores")
+    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_all,
+                                                    model_type=args.model_type,
+                                                    meta=meta,
+                                                    rule_features=data_all.kg_scores,
+                                                    rule_names=+meta['rule_names'],                                      
+                                                    device=device,
+                                                    db_url=f"sqlite:///{final_output_dir}/FuzzyAllKGRules_optuna.db",
+                                                    use_kg=True,
+                                                    use_topo=False,
+                                                    seed = args.seed,
+                                                    epochs=args.epochs,
+                                                    num_trial=args.num_trial,
+                                                    n_jobs=args.n_jobs,
+                                                    n_splits=args.n_splits,
+                                                    Patience=50)
     # FuzzyGNN with TopoFeatures + KGRules
     print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_direct_scores")
-    results[f'Fuzzy{args.model_type}_direct_rules'] = run_cv(data=data_direct,
+    results[f'Fuzzy{args.model_type}_topo_direct_rules'] = run_cv(data=data_direct,
                                                    model_type=args.model_type,
+                                                   meta=meta,
+                                                   rule_features=torch.cat(
+                                                                    [data_direct.topo_features, data_direct.kg_scores],
+                                                                    dim=1),
+                                                   rule_names=topo_features+meta['direct_rule_names'],
                                                    device=device,
-                                                   db_url=f"sqlite:///{final_output_dir}/FuzzyDirectKGRules_optuna.db",
+                                                   db_url=f"sqlite:///{final_output_dir}/FuzzyTopoDirectKGRules_optuna.db",
                                                    use_kg=True,
                                                    use_topo=True,
                                                    seed = args.seed,
@@ -160,10 +206,15 @@ def main():
                                                    Patience=50)
     # FuzzyGNN with TopoFeatures + all KGRules
     print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_all_scores")
-    results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_all,
+    results[f'Fuzzy{args.model_type}_topo_all_rules'] = run_cv(data=data_all,
                                                     model_type=args.model_type,
+                                                    meta=meta,
+                                                    rule_features=torch.cat(
+                                                                    [data_direct.topo_features, data_all.kg_scores],
+                                                                    dim=1),
+                                                    rule_names=topo_features+meta['rule_names'],                                      
                                                     device=device,
-                                                    db_url=f"sqlite:///{final_output_dir}/FuzzyAllKGRules_optuna.db",
+                                                    db_url=f"sqlite:///{final_output_dir}/FuzzyTopoAllKGRules_optuna.db",
                                                     use_kg=True,
                                                     use_topo=True,
                                                     seed = args.seed,
@@ -172,6 +223,7 @@ def main():
                                                     n_jobs=args.n_jobs,
                                                     n_splits=args.n_splits,
                                                     Patience=50)
+    
     # # KGRuleGNN with rules
     # print(f"\nRun CV-HPO on KGRule{args.model_type}: direct rules")
     # results[f'KGRules{args.model_type}_direct_rules'] = run_cv(data=data_direct,

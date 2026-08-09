@@ -35,15 +35,25 @@ class BaselineGCN(nn.Module):
 
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index, edge_attr) # GCNConv accepts edge_weight=[E] and being used in Ajacency matrix as w_ij
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index, edge_attr)
-        return F.log_softmax(self.classifier(x), dim=1), None
+        h = self.convs[-1](x, edge_index, edge_attr)
 
+        logits = self.classifier(h)
+        r,e,g,h_prime = None, None, None, None
+
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 class BaselineGAT(nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels,
@@ -67,16 +77,14 @@ class BaselineGAT(nn.Module):
 
         # Final layer (often concat=False for the last layer, or keep concat=True and adjust classifier)
         if num_layers > 1:
-            self.convs.append(GATConv(hidden_channels * heads, out_channels, heads=1, 
+            self.convs.append(GATConv(hidden_channels * heads, hidden_channels, heads=1, 
                                       concat=False, dropout=dropout, negative_slope=negative_slope))
-            self.classifier = None # Output is already out_channels if last layer uses concat=False
-        else:
-            # If num_layers == 1
-            self.convs[0] = GATConv(in_channels, out_channels, heads=1, concat=False,
-                                    dropout=dropout, negative_slope=negative_slope)
-            self.classifier = None
+        for _ in range(num_layers - 1):
+            self.bns.append(nn.BatchNorm1d(hidden_channels))
+         
+        self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index, edge_attr)
             x = self.bns[i](x)
@@ -84,8 +92,18 @@ class BaselineGAT(nn.Module):
             x = F.dropout(x, p=self.dropout, training=self.training)
             
         # Final convolution layer
-        x = self.convs[-1](x, edge_index, edge_attr)
-        return F.log_softmax(x, dim=1), None
+        h = self.convs[-1](x, edge_index, edge_attr)
+        logits = self.classifier(h)
+        r,e,g,h_prime = None, None, None, None
+
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 class MLP(nn.Module):
     """
@@ -139,14 +157,25 @@ class BaselineGIN(nn.Module):
 
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index)
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index)
-        return F.log_softmax(self.classifier(x), dim=1), None
+        h = self.convs[-1](x, edge_index)
+
+        logits = self.classifier(h)
+        r,e,g,h_prime = None, None, None, None
+
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 
 # ── KG-integrated GNN models ──────────────────────────────────────────────────
@@ -187,21 +216,31 @@ class KGRuleGCN(nn.Module):
         self.fusion     = nn.Linear(hidden_channels + hidden_channels // 2, hidden_channels)
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         # GCN forward
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index, edge_attr)
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index, edge_attr)
+        h = self.convs[-1](x, edge_index, edge_attr)
 
         # KG symbolic branch
-        if kg_scores is not None:
-            kg_emb = self.kg_proj(kg_scores)
-            x = F.relu(self.fusion(torch.cat([x, kg_emb], dim=1)))
+        r,e,g,h_prime = None, None, None, None
+        if rule_features is not None:
+            kg_emb = self.kg_proj(rule_features)
+            h_prime = F.relu(self.fusion(torch.cat([h, kg_emb], dim=1)))
 
-        return F.log_softmax(self.classifier(x), dim=1), None
+        logits = self.classifier(h_prime)
+        
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 
 class KGRuleGAT(nn.Module):
@@ -238,19 +277,30 @@ class KGRuleGAT(nn.Module):
         self.fusion     = nn.Linear(hidden_channels + hidden_channels // 2, hidden_channels)
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index)
             x = self.bns[i](x)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index)
+        h = self.convs[-1](x, edge_index)
 
-        if kg_scores is not None:
-            kg_emb = self.kg_proj(kg_scores)
-            x = F.relu(self.fusion(torch.cat([x, kg_emb], dim=1)))
+        # KG symbolic branch
+        r,e,g,h_prime = None, None, None, None
+        if rule_features is not None:
+            kg_emb = self.kg_proj(rule_features)
+            h_prime = F.relu(self.fusion(torch.cat([h, kg_emb], dim=1)))
 
-        return F.log_softmax(self.classifier(x), dim=1), None
+        logits = self.classifier(h_prime)
+        
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 
 class KGRuleGIN(nn.Module):
@@ -281,19 +331,30 @@ class KGRuleGIN(nn.Module):
         self.fusion     = nn.Linear(hidden_channels + hidden_channels // 2, hidden_channels)
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, kg_scores=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         for i, conv in enumerate(self.convs[:-1]): # type: ignore
             x = conv(x, edge_index)
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index)
+        h = self.convs[-1](x, edge_index)
 
-        if kg_scores is not None:
-            kg_emb = self.kg_proj(kg_scores)
-            x = F.relu(self.fusion(torch.cat([x, kg_emb], dim=1)))
+        # KG symbolic branch
+        r,e,g,h_prime = None, None, None, None
+        if rule_features is not None:
+            kg_emb = self.kg_proj(rule_features)
+            h_prime = F.relu(self.fusion(torch.cat([h, kg_emb], dim=1)))
 
-        return F.log_softmax(self.classifier(x), dim=1), None
+        logits = self.classifier(h_prime)
+        
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 # -- Fuzzy Rule models ---------------------------------------------------------
 class FuzzyRuleLayer(nn.Module):
@@ -312,20 +373,12 @@ class FuzzyRuleLayer(nn.Module):
         # Learnable sharpness α_i (initialized positive)
         self.alpha = nn.Parameter(torch.ones(num_rules))
 
-    def forward(self, topo_features):
-        """
-        Args:
-            topo_features: Tensor [N, 6]
-                [degree, clustering coefficient, 2-hop label agreement]
-
-        Returns:
-            r: Tensor [N, 6] fuzzy rule activations
-        """
+    def forward(self, rule_features):
         # Ensure correct dimensionality
-        assert topo_features.size(1) == self.num_rules
+        assert rule_features.size(1) == self.num_rules
 
         # r_i(u) = sigmoid(alpha_i * (f_i(u) - theta_i))
-        r = torch.sigmoid(self.alpha * (topo_features - self.theta))
+        r = torch.sigmoid(self.alpha * (rule_features - self.theta))
         return r
     
 class FuzzyGCN(nn.Module):
@@ -339,7 +392,7 @@ class FuzzyGCN(nn.Module):
 
         self.num_layers = num_layers
         self.dropout = dropout
-        d = hidden_channels
+        self.hidden_channels = hidden_channels
 
         # ---------- GCN backbone ----------
         self.convs = nn.ModuleList()
@@ -364,7 +417,7 @@ class FuzzyGCN(nn.Module):
         # Classifier
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, topo_features=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         """
         Args:
             x: Node features [N, in_channels]
@@ -383,9 +436,11 @@ class FuzzyGCN(nn.Module):
 
         r = None
         h_prime = None
-        if topo_features is not None:
+        e=None
+        g=None
+        if rule_features is not None:
             # ----- Fuzzy rule activation (Eq. 3) -----
-            r = self.fuzzy_layer(topo_features)  # [N, 6]
+            r = self.fuzzy_layer(rule_features)  # [N, 6]
 
             # ----- Rule projection (Eq. 4) ---
             e = self.rule_proj(r)
@@ -396,9 +451,16 @@ class FuzzyGCN(nn.Module):
             h_prime = g * h + (1 - g) * e
 
         # ----- Classification -----
-        out = self.classifier(h_prime) 
+        logits = self.classifier(h_prime)
 
-        return F.log_softmax(out, dim=1), r
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
 
 class FuzzyGAT(nn.Module):
     """
@@ -445,7 +507,7 @@ class FuzzyGAT(nn.Module):
         # Classifier
         self.classifier = nn.Linear(hidden_channels, out_channels)
         
-    def forward(self, x, edge_index, edge_attr=None, topo_features=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         # GAT forward pass
         for i in range(self.num_layers - 1):
             x = self.convs[i](x, edge_index, edge_attr)
@@ -457,9 +519,11 @@ class FuzzyGAT(nn.Module):
         
         r = None
         h_prime = None
-        if topo_features is not None:
+        e=None
+        g=None
+        if rule_features is not None:
             # ----- Fuzzy rule activation (Eq. 3) -----
-            r = self.fuzzy_layer(topo_features)  # [N, 6]
+            r = self.fuzzy_layer(rule_features)  # [N, 6]
 
             # ----- Rule projection (Eq. 4) ---
             e = self.rule_proj(r)
@@ -470,9 +534,16 @@ class FuzzyGAT(nn.Module):
             h_prime = g * h + (1 - g) * e
 
         # ----- Classification -----
-        out = self.classifier(h_prime) 
+        logits = self.classifier(h_prime)
 
-        return F.log_softmax(out, dim=1), r
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
     
 class FuzzyGIN(nn.Module):
     """
@@ -513,7 +584,7 @@ class FuzzyGIN(nn.Module):
         # Classifier
         self.classifier = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, x, edge_index, edge_attr=None, topo_features=None):
+    def forward(self, x, edge_index, edge_attr=None, rule_features=None):
         # GIN forward pass
         for i in range(self.num_layers - 1):
             x = self.convs[i](x, edge_index)
@@ -525,9 +596,11 @@ class FuzzyGIN(nn.Module):
         
         r = None
         h_prime = None
-        if topo_features is not None:
+        e=None
+        g=None
+        if rule_features is not None:
             # ----- Fuzzy rule activation (Eq. 3) -----
-            r = self.fuzzy_layer(topo_features)  # [N, 6]
+            r = self.fuzzy_layer(rule_features)  # [N, 6]
 
             # ----- Rule projection (Eq. 4) ---
             e = self.rule_proj(r)
@@ -538,9 +611,59 @@ class FuzzyGIN(nn.Module):
             h_prime = g * h + (1 - g) * e
 
         # ----- Classification -----
-        out = self.classifier(h_prime) 
+        logits = self.classifier(h_prime)
 
-        return F.log_softmax(out, dim=1), r
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gnn_embedding": h,
+            "fused_embedding": h_prime,
+        }
+
+class FuzzyNN(nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, 
+                 num_rules=10, num_layers=2, dropout=0.5):
+        super(FuzzyNN, self).__init__()
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.num_rules = num_rules
+        
+        # ---------- Fuzzy rules ----------
+        self.fuzzy_layer = FuzzyRuleLayer(num_rules=num_rules)
+
+        # Rule projection: Eq. (4) 
+        self.rule_proj = nn.Linear(num_rules, hidden_channels)
+
+        # Gate: Eq. (5)
+        self.gate = nn.Linear(2*hidden_channels, hidden_channels)
+
+        # Classifier
+        self.classifier = nn.Linear(hidden_channels, out_channels)
+        
+    def forward(self, rule_features, x=None, edge_index=None, edge_attr=None):
+        g=None
+        h=None
+        h_prime=None
+        # ----- Fuzzy rule activation (Eq. 3) -----
+        r = self.fuzzy_layer(rule_features)  # [N, 6]
+
+        # ----- Rule projection (Eq. 4) ---
+        e = self.rule_proj(r)
+
+        # ----- Classification -----
+        logits = self.classifier(e)
+
+        return {
+            "logits": logits,
+            "rules": r,
+            "rule_embedding": e,
+            "gate": g,
+            "gat_embedding": h,
+            "fused_embedding": h_prime,
+        }
+        
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
@@ -550,7 +673,7 @@ def get_model(model_type, in_channels, hidden_channels, out_channels,
     Unified factory function to instantiate any model flavor seamlessly.
     
     Args:
-        model_type (str): 'gcn' | 'gat' | 'gin'
+        model_type (str): 'gcn' | 'gat' | 'gin' | 'fuzzynn'
         use_kg (bool): True for KG rule integrated models.
         use_topo (bool): True for topology-based fuzzy rule models.
         (If both are False, defaults to standard baseline model).
@@ -563,7 +686,8 @@ def get_model(model_type, in_channels, hidden_channels, out_channels,
         registry = {'gcn': BaselineGCN, 'gat': BaselineGAT, 'gin': BaselineGIN} # Fallback base
     else:
         registry = {'gcn': FuzzyGCN, 'gat': FuzzyGAT, 'gin': FuzzyGIN}
-   
+    registry['fuzzynn'] = FuzzyNN
+
     if model_type not in registry:
         raise ValueError(f"Unsupported model_type: {model_type}")
     

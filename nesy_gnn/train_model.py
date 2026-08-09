@@ -34,6 +34,7 @@ from sklearn.preprocessing import StandardScaler
 
 from nesy_gnn.models import get_model
 from nesy_gnn.rule_engine import extract_rules
+from nesy_gnn.post_analysis import explain
 
 
 
@@ -172,8 +173,8 @@ def get_patient_features(
     kg_path: str, 
     exp_df: pd.DataFrame, 
     patients: list,
-    z_norm: bool = True, 
-    KGRule: bool = True
+    z_norm: bool, 
+    KGRule: bool,
 ):
     """
     Extracts expression features and Knowledge Graph (KG) rule-based symbolic scores 
@@ -247,9 +248,9 @@ def build_patient_graph(
     design_df: pd.DataFrame,
     k: int, 
     out_dir: str, 
+    z_norm: bool,
+    KGRule: bool,
     metric: str = 'cosine',
-    z_norm: bool = True,
-    KGRule: bool = True
 ):
     """
     Constructs a patient similarity K-NN graph, attaches multi-modal node attributes 
@@ -410,8 +411,13 @@ def train_epoch(model, data, train_mask, optimizer, use_kg, use_topo):
     else:
         rule_feature=None
 
-    out, rules = model(data.x, data.edge_index, data.edge_attr, rule_feature)
-    loss = F.nll_loss(out[train_mask], data.y[train_mask])
+    out_dict = model(x=data.x, 
+                     edge_index=data.edge_index, 
+                     edge_attr=data.edge_attr, 
+                     rule_features = rule_feature)
+    
+    out_logits = F.log_softmax(out_dict['logits'],dim=1)
+    loss = F.nll_loss(out_logits[train_mask], data.y[train_mask])
     loss.backward()
     optimizer.step()
     return loss.item()
@@ -437,15 +443,14 @@ def evaluate(model, data, mask, use_kg, use_topo):
     else:
         rule_feature = None
 
-    out, rules = model(
-        data.x,
-        data.edge_index,
-        data.edge_attr,
-        rule_feature,
-    )
+    out_dict = model(x=data.x, 
+                     edge_index=data.edge_index, 
+                     edge_attr=data.edge_attr, 
+                     rule_features = rule_feature)
+    out_logits = F.log_softmax(out_dict['logits'],dim=1)
 
-    prob = torch.exp(out[mask])[:, 1].cpu().numpy()
-    pred = out[mask].argmax(dim=1).cpu().numpy()
+    prob = torch.exp(out_logits[mask])[:, 1].cpu().numpy()
+    pred = out_logits[mask].argmax(dim=1).cpu().numpy()
     true = data.y[mask].cpu().numpy()
 
     metrics = {}
@@ -477,11 +482,43 @@ def evaluate(model, data, mask, use_kg, use_topo):
     except ValueError:
         metrics["auprc"] = float("nan")
 
+    rules = out_dict['rules']
     if rules is not None:
         rules = rules.cpu()
 
     return metrics, rules
 
+def get_rule_params(model, data, use_kg, use_topo):
+
+    model.eval()
+    
+    if use_kg and not use_topo:
+        rule_feature = data.kg_scores
+    elif use_topo and not use_kg:
+        rule_feature = data.topo_features
+    elif use_topo and use_kg:
+        rule_feature = torch.cat(
+            [data.topo_features, data.kg_scores], dim=1
+        )
+    else:
+        rule_feature = None
+
+    result = model(data.x, data.edge_index, data.edge_attr, rule_feature)
+
+    logits = result["logits"]
+    r = result["rules"]
+
+    
+    score = logits[:, 1].sum()
+
+    score.backward()
+
+    # gradient-based rule importatnce
+    grad_x_activation = (r * r.grad).abs()
+    # Average across nodes
+    rule_importance = grad_x_activation.mean(dim=0)
+
+    
 
 def run_inner_hpo(
     db_url,
@@ -672,6 +709,9 @@ def run_inner_hpo(
 def run_cv(
     data, 
     model_type, 
+    meta,
+    rule_features,
+    rule_names,
     device,
     db_url,
     use_kg: bool, 
@@ -708,6 +748,7 @@ def run_cv(
     accs, f1s, aucs = [], [], []
     fold_rules, fold_fuzzy_params = [], []
     fold_metrics = []
+    fold_df_rules, fold_df_samples = [], []
     
     # Ensure data is fully on the target device upfront
     d = data.to(device)
@@ -755,11 +796,11 @@ def run_cv(
 
         # (3) Add KG-specific parameters if using KG rules
         if use_topo is False and use_kg and hasattr(data, "kg_scores") and data.kg_scores is not None:
-            model_kwargs["kg_in_channels"] = data.kg_scores.size(1)
-
+            model_kwargs['num_rules']=data.kg_scores.size(1)
         # (4) Add Fuzzy/Topology-specific parameters if using fuzzy rules
         if use_kg is False and use_topo and hasattr(data, "topo_features") and data.topo_features is not None:
             model_kwargs["num_rules"] = data.topo_features.size(1)
+        # (4) Add both Topo & KG rules
         if use_kg and use_topo:
             topo_rules = data.topo_features.size(1) if hasattr(data, "topo_features") and data.topo_features is not None else 0
             kg_rules = data.kg_scores.size(1) if hasattr(data, "kg_scores") and data.kg_scores is not None else 0
@@ -794,12 +835,22 @@ def run_cv(
             scheduler.step()
 
         fuzzy_params = {}
-        if use_topo:
+        if use_topo or use_kg:
             fuzzy_params = {
                 "theta": getattr(model.fuzzy_layer, "theta", None),
                 "alpha": getattr(model.fuzzy_layer, "alpha", None)
             }
             fold_fuzzy_params.append(fuzzy_params)
+
+            # Explain 
+            df_rules, df_samples = explain(model=model,
+                                            data=data,
+                                            rule_feature=rule_features,
+                                            rule_names=rule_names,
+                                            patients=meta['patient'],
+                                            metric_name=metric_name)
+            fold_df_rules.append(df_rules)
+            fold_df_samples.append(df_samples)
 
         # Evaluate on the held-out test fold
         test_metrics, rules = evaluate(model, 
@@ -815,9 +866,14 @@ def run_cv(
         fold_rules.append(rules)
         print(f'  Fold {fold} Test -> Acc: {acc:.3f} | F1: {f1:.3f} | AUC: {auc:.3f}')
 
+        
     print(f'\n=== Cross-Validation Results ===')
     print(f'  Accuracy : {np.mean(accs):.3f} ± {np.std(accs):.3f}')
     print(f'  F1 (AD)  : {np.mean(f1s):.3f} ± {np.std(f1s):.3f}')
     print(f'  AUC      : {np.nanmean(aucs):.3f} ± {np.nanstd(aucs):.3f}')
 
-    return {'fold_test_metrics':fold_metrics, 'fuzzy_rules':fold_rules, 'fuzzy_params':fold_fuzzy_params}
+    return {'fold_test_metrics':fold_metrics, 
+            'fuzzy_rules':fold_rules, 
+            'fuzzy_params':fold_fuzzy_params,
+            'df_rules': fold_df_rules,
+            'df_samples': fold_df_samples}
