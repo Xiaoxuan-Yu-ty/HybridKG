@@ -376,6 +376,8 @@ class FuzzyRuleLayer(nn.Module):
     def forward(self, rule_features):
         # Ensure correct dimensionality
         assert rule_features.size(1) == self.num_rules
+        # print('Number of rules:', self.num_rules)
+        # print('rule features size:', rule_features.size())
 
         # r_i(u) = sigmoid(alpha_i * (f_i(u) - theta_i))
         r = torch.sigmoid(self.alpha * (rule_features - self.theta))
@@ -680,13 +682,13 @@ def get_model(model_type, in_channels, hidden_channels, out_channels,
     """
     model_type = model_type.lower()
     
-    if use_kg and not use_topo:
-        registry = {'gcn': KGRuleGCN, 'gat': KGRuleGAT, 'gin': KGRuleGIN}
-    elif not use_topo and not use_kg:
-        registry = {'gcn': BaselineGCN, 'gat': BaselineGAT, 'gin': BaselineGIN} # Fallback base
-    else:
+    # if use_kg and not use_topo:
+    #     registry = {'gcn': KGRuleGCN, 'gat': KGRuleGAT, 'gin': KGRuleGIN}
+    if use_topo or use_kg:
         registry = {'gcn': FuzzyGCN, 'gat': FuzzyGAT, 'gin': FuzzyGIN}
-    registry['fuzzynn'] = FuzzyNN
+    else:
+        registry = {'gcn': BaselineGCN, 'gat': BaselineGAT, 'gin': BaselineGIN} # Fallback base
+    registry['ruleonly'] = FuzzyNN
 
     if model_type not in registry:
         raise ValueError(f"Unsupported model_type: {model_type}")

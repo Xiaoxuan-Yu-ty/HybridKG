@@ -139,10 +139,10 @@ def get_rule_params(model: nn.Module,
 
     # Forward pass
     result = model(
-        data.x,
-        data.edge_index,
-        getattr(data, 'edge_attr', None),
-        rule_feature
+        x=data.x,
+        edge_index=data.edge_index,
+        edge_attr=getattr(data, 'edge_attr', None),
+        rule_features=rule_feature
     )
 
     logits = result["logits"]
@@ -419,7 +419,8 @@ def explain(model: nn.Module,
 
     # Assemble Sample-level Dataframe
     df_samples = pd.DataFrame(pred_attribution.numpy(), columns=rule_names)
-    df_samples['gate'] = results['gate'].abs().mean(dim=1).detach().cpu().numpy()
+    if results['gate'] is not None:
+        df_samples['gate'] = results['gate'].abs().mean(dim=1).detach().cpu().numpy()
     df_samples['sample_id'] = patients
     df_samples['Label'] = true_labels.cpu().numpy()
     df_samples['Prediction'] = pred_labels.cpu().numpy()

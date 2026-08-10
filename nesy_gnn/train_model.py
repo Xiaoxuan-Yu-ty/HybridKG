@@ -449,7 +449,7 @@ def evaluate(model, data, mask, use_kg, use_topo):
                      rule_features = rule_feature)
     out_logits = F.log_softmax(out_dict['logits'],dim=1)
 
-    prob = torch.exp(out_logits[mask])[:, 1].cpu().numpy()
+    prob = torch.softmax(out_logits[mask], dim=1)[:, 1].cpu().numpy()
     pred = out_logits[mask].argmax(dim=1).cpu().numpy()
     true = data.y[mask].cpu().numpy()
 
@@ -594,7 +594,7 @@ def run_inner_hpo(
 
         # (3) Add KG-specific parameters if using KG rules
         if not use_topo and use_kg and hasattr(data, "kg_scores") and data.kg_scores is not None:
-            model_kwargs["kg_in_channels"] = data.kg_scores.size(1)
+            model_kwargs["num_rules"] = data.kg_scores.size(1)
             #print(f"kg_in_channels = {data.kg_scores.size(1)}")
 
         # (4) Add Fuzzy/Topology-specific parameters if using fuzzy rules
@@ -833,25 +833,6 @@ def run_cv(
                         use_kg=use_kg, 
                         use_topo=use_topo)
             scheduler.step()
-
-        fuzzy_params = {}
-        if use_topo or use_kg:
-            fuzzy_params = {
-                "theta": getattr(model.fuzzy_layer, "theta", None),
-                "alpha": getattr(model.fuzzy_layer, "alpha", None)
-            }
-            fold_fuzzy_params.append(fuzzy_params)
-
-            # Explain 
-            df_rules, df_samples = explain(model=model,
-                                            data=data,
-                                            rule_feature=rule_features,
-                                            rule_names=rule_names,
-                                            patients=meta['patient'],
-                                            metric_name=metric_name)
-            fold_df_rules.append(df_rules)
-            fold_df_samples.append(df_samples)
-
         # Evaluate on the held-out test fold
         test_metrics, rules = evaluate(model, 
                                        d, 
@@ -866,6 +847,23 @@ def run_cv(
         fold_rules.append(rules)
         print(f'  Fold {fold} Test -> Acc: {acc:.3f} | F1: {f1:.3f} | AUC: {auc:.3f}')
 
+        fuzzy_params = {}
+        if use_topo or use_kg:
+            fuzzy_params = {
+                "theta": getattr(model.fuzzy_layer, "theta", None),
+                "alpha": getattr(model.fuzzy_layer, "alpha", None)
+            }
+            fold_fuzzy_params.append(fuzzy_params)
+
+            # Explain 
+            df_rules, df_samples = explain(model=model,
+                                            data=data,
+                                            rule_feature=rule_features,
+                                            rule_names=rule_names,
+                                            patients=meta['patients'],
+                                            metric_name=metric_name)
+            fold_df_rules.append(df_rules)
+            fold_df_samples.append(df_samples)
         
     print(f'\n=== Cross-Validation Results ===')
     print(f'  Accuracy : {np.mean(accs):.3f} ± {np.std(accs):.3f}')

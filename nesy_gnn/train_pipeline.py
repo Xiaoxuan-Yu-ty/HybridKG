@@ -1,5 +1,6 @@
 import argparse
 import gc
+import json
 import sys, os, pickle
 import networkx as nx
 from tqdm import tqdm
@@ -43,9 +44,9 @@ def parse():
                         help='K Neareast Neighbor used in generating patient graph')
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
-    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/updated")
+    parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/explain")
     parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
-    parser.add_argument('--model_type', type=str, default='GCN', choices=['GAT', 'GCN', 'GIN','FuzzyNN'])
+    parser.add_argument('--model_type', type=str, default='RuleOnly', choices=['GAT', 'GCN', 'GIN','RuleOnly'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  
     # Model parameters
@@ -57,10 +58,10 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=50, help="Number of trials for HPO process.")
+    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of jobs in Optuna HPO process.")
-    parser.add_argument("--n_splits", type=int, default=5, help="The number of splits in CV HPO")
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--n_splits", type=int, default=3, help="The number of splits in CV HPO")
+    parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
 
@@ -91,32 +92,42 @@ def main():
     )
     os.makedirs(final_output_dir, exist_ok=True)
 
-    # 1. Build patient graph and convert to PyG Data
-    exp_df = pd.read_csv(args.exp_path, index_col=0)
-    try:
-        design_df = pd.read_csv(args.design, index_col=0)
-        design_df['Target'] = design_df['Target'].map({'Disease':'Disease','Control':'Control'})
-    except:
-        design_df = pd.read_csv(args.design, sep='\t', index_col=0)
-        design_df['Target'] = design_df['Old_Target'].map({'Disease':'Disease','Control':'Control'})
+    # check point:
+    graph_path = os.path.join(graph_output, 'patient_graph.gpickle')
+    meta_path = os.path.join(graph_output, 'graph_meta.json')
+    if os.path.exists(path=graph_path) and os.path.exists(meta_path):
+        with open(graph_path,'rb') as f:
+            G = pickle.load(f)
+        with open(meta_path, 'rb') as f:
+            meta=json.load(f)
+    else:
 
-    G, meta = build_patient_graph(
-        kg_path=args.kg_path,
-        exp_df=exp_df,
-        design_df=design_df,
-        k=args.k, 
-        out_dir=graph_output, 
-        metric= 'cosine',
-        z_norm=True, # use log2fc transformed expression scores as input features
-        KGRule=False # not only use genes in KGRules
-    )
+        # 1. Build patient graph and convert to PyG Data
+        exp_df = pd.read_csv(args.exp_path, index_col=0)
+        try:
+            design_df = pd.read_csv(args.design, index_col=0)
+            design_df['Target'] = design_df['Target'].map({'Disease':'Disease','Control':'Control'})
+        except:
+            design_df = pd.read_csv(args.design, sep='\t', index_col=0)
+            design_df['Target'] = design_df['Old_Target'].map({'Disease':'Disease','Control':'Control'})
+
+        G, meta = build_patient_graph(
+            kg_path=args.kg_path,
+            exp_df=exp_df,
+            design_df=design_df,
+            k=args.k, 
+            out_dir=graph_output, 
+            metric= 'cosine',
+            z_norm=True, # use log2fc transformed expression scores as input features
+            KGRule=False # not only use genes in KGRules
+        )
     data_all      = build_pyg_data(G, use_direct_rules=False)
     data_direct   = build_pyg_data(G, use_direct_rules=True)
 
     # 2. HPO
     topo_features = ['degrees', 'clustering', 'eigenvector_centrality', 'degree_centrality', 'avg_edge_weight']
     results= {}
-    if args.model_type != 'FuzzyNN':
+    if args.model_type != 'RuleOnly':
         # use BaselineGNN
         print(f"\nRun CV-HPO on Baseline{args.model_type}")
         results[f'{args.model_type}'] = run_cv(data=data_direct,
@@ -168,13 +179,13 @@ def main():
                                                     n_jobs=args.n_jobs,
                                                     n_splits=args.n_splits,
                                                     Patience=50)
-    # FuzzyGNN with TopoFeatures + all KGRules
-    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: topo_features + kg_all_scores")
+    # FuzzyGNN with all KGRules
+    print(f"\nRun CV-HPO on Fuzzy{args.model_type}: kg_all_scores")
     results[f'Fuzzy{args.model_type}_all_rules'] = run_cv(data=data_all,
                                                     model_type=args.model_type,
                                                     meta=meta,
                                                     rule_features=data_all.kg_scores,
-                                                    rule_names=+meta['rule_names'],                                      
+                                                    rule_names=meta['rule_names'],                                      
                                                     device=device,
                                                     db_url=f"sqlite:///{final_output_dir}/FuzzyAllKGRules_optuna.db",
                                                     use_kg=True,
