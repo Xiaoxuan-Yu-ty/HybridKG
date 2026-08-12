@@ -1,24 +1,20 @@
 "Post Training Analysis functions, like plot, evaluate rules..."
 import os
+import pickle
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pickle
 
 import torch
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    f1_score,
-    roc_auc_score,
-    average_precision_score,
-)
+import torch.nn as nn
 import torch.nn.functional as F
-import torch
+import pandas as pd
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score
 from captum.attr import IntegratedGradients
+from typing import Dict, Optional, Tuple, Any, List
 
-
+# ===================== Plot Metrics ==========================================
 def parse_cv_metrics(root_dir):
     dfs = []
 
@@ -76,6 +72,8 @@ def backbone(model):
         return "GAT"
     elif "GIN" in model:
         return "GIN"
+    elif "RuleOnly" in model:
+        return "RuleOnly"
     else:
         return "Other"
         
@@ -110,13 +108,436 @@ def boxplot_comparison(df, metric_name, dataset):
     plt.tight_layout()
     plt.show()
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score
-from captum.attr import IntegratedGradients
-from typing import Dict, Optional, Tuple, Any, List
+# ------------------------------------------------------------------
+def ceiling_div(n,d):
+    return (n+d-1)//d
+    
+# Four subplots (one for each base model type) in one figure
+def boxplot_all_backbones_subplots(df, 
+                                   metric_name: str, 
+                                   dataset: str, 
+                                   k: str|int=4,
+                                   output_dir=None):
+    # Filter and copy to avoid SettingWithCopyWarning
+    plot_df = df[
+        (df["metric"] == metric_name) & 
+        (df["k"] == str(k)) &
+        (df['dataset']==dataset)
+    ].copy()
+    
+    plot_df["backbone"] = plot_df["model"].apply(backbone)
+    
+    backbones = sorted(plot_df['backbone'].unique())
+    num_subplots = len(backbones)
+    
+    # Create grid based on number of backbones
+    fig, axes = plt.subplots(2, ceiling_div(num_subplots, 2), figsize=(16, 12))
+    axes = axes.flatten()
+    subplot_colors = sns.color_palette("pastel", n_colors=num_subplots)
+    
+    for i, bb in enumerate(backbones):
+        ax = axes[i]
+        bb_df = plot_df[plot_df["backbone"] == bb]
+        
+        # Explicit order to ensure boxplot, dots, and text all align
+        model_order = bb_df['model'].unique()
+        
+        # 1. Plot the boxes
+        sns.boxplot(
+            data=bb_df,
+            x="model",
+            y="score",
+            hue="model",
+            ax=ax,
+            palette="Set2",
+            legend=False,
+            order=model_order
+        )
+        
+        # 2. Add data dots
+        sns.stripplot(
+            data=bb_df,
+            x="model",
+            y="score",
+            color="black",
+            alpha=0.5,
+            jitter=True,
+            size=5,
+            ax=ax,
+            order=model_order
+        )
+        
+        # 3. Calculate and annotate Mean & Std inside boxes
+        for idx, m in enumerate(model_order):
+            scores = bb_df[bb_df["model"] == m]["score"]
+            mean_val = scores.mean()
+            std_val = scores.std()
+            
+            # Place text at the mean coordinate
+            ax.text(
+                idx, mean_val, 
+                f"{mean_val:.3f}\n±{std_val:.3f}", 
+                ha='center', va='center', 
+                color='black', fontsize=9, fontweight='bold',
+                bbox=dict(facecolor='white', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.2')
+            )
+        
+        ax.set_title(f"{bb} Variations", fontsize=16)
+        ax.set_xlabel("")
+        ax.set_ylabel(metric_name.capitalize(), fontsize=10)
+        ax.tick_params(axis='x', rotation=45)
+        
+    # Remove any empty subplots (if num_subplots is odd)
+    for j in range(num_subplots, len(axes)):
+        fig.delaxes(axes[j])
+        
+    fig.suptitle(f"Performance comparison: {metric_name.capitalize()} | {dataset} | k={k}", fontsize=20)
+    plt.tight_layout()
+    
+    # --- SAVE PLOT LOGIC ---
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True) 
+        filename = f"all_backbones_{dataset}_k{k}_{metric_name}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight') # dpi=300 for high quality
+        print(f"Saved plot to: {filepath}")
+        
+    plt.show()
+
+
+# 2. Plot variations for only ONE specified backbone
+def boxplot_single_backbone(df, 
+                            metric_name: str, 
+                            dataset: str, 
+                            target_backbone: str, 
+                            k: str|int=4,
+                            output_dir=None):
+    plot_df = df[
+        (df["metric"] == metric_name) & 
+        (df["k"] == str(k)) &
+        (df['dataset']==dataset)
+    ].copy()
+    
+    plot_df["backbone"] = plot_df["model"].apply(backbone)
+    plot_df = plot_df[plot_df["backbone"] == target_backbone]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Explicit order
+    model_order = plot_df['model'].unique()
+
+    # 1. Plot the boxes
+    sns.boxplot(
+        data=plot_df,
+        x="model",
+        y="score",
+        hue="model",
+        ax=ax,
+        palette="Set2",
+        legend=False,
+        order=model_order
+    )
+    
+    # 2. Add data dots
+    sns.stripplot(
+        data=plot_df,
+        x="model",
+        y="score",
+        color="black",
+        alpha=0.5,
+        jitter=True,
+        size=5,
+        ax=ax,
+        order=model_order
+    )
+    
+    # 3. Calculate and annotate Mean & Std inside boxes
+    for idx, m in enumerate(model_order):
+        scores = plot_df[plot_df["model"] == m]["score"]
+        mean_val = scores.mean()
+        std_val = scores.std()
+        
+        # Place text at the mean coordinate
+        ax.text(
+            idx, mean_val, 
+            f"{mean_val:.3f}\n±{std_val:.3f}", 
+            ha='center', va='center', 
+            color='black', fontsize=10, fontweight='bold',
+            bbox=dict(facecolor='white', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.2')
+        )
+
+    plt.xticks(rotation=45, ha="right")
+    plt.title(f"{target_backbone} Variations: {metric_name.capitalize()} | {dataset} | k={k}")
+    plt.ylabel(metric_name.capitalize())
+    plt.xlabel("Model")
+    plt.tight_layout()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"{target_backbone}_{dataset}_k{k}_{metric_name}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Saved plot to: {filepath}")
+    #plt.show()
+# -----------------------------------------------------------------------------
+def variation_suffix(model):
+    if "_" not in model:
+        return "Baseline"
+    else:
+        suf = model.split("_")[1:]
+        suffix = "_".join(suf)
+        return suffix
+    
+# Compare the SAME variation across the 4 base models
+def boxplot_single_variation(df, 
+                                 metric_name: str, 
+                                 dataset: str, 
+                                 suffix: str, 
+                                 k: str|int=4,
+                                 output_dir=None):
+    """
+    Example usage: 
+    If your models are named GCN_v1, GAT_v1, etc.
+    Pass suffix="v1" to compare them.
+    """
+    plot_df = df[
+        (df["metric"] == metric_name) & 
+        (df["k"] == str(k))
+    ].copy()
+
+    plot_df["suffix"] = plot_df["model"].apply(variation_suffix)
+    plot_df = plot_df[plot_df["suffix"] == suffix]
+    target_models = sorted(plot_df['model'].unique())
+
+    num_subplots = len(plot_df['suffix'].unique())
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    sns.boxplot(
+        data=plot_df,
+        x="model",
+        y="score",
+        ax=ax,
+        # Order explicitly ensures they always appear in this specific order on the X-axis
+        order=target_models, 
+        palette="Set1"
+    )
+    # 2. Add data dots
+    sns.stripplot(
+        data=plot_df,
+        x="model",
+        y="score",
+        color="black",
+        alpha=0.5,
+        jitter=True,
+        size=5,
+        ax=ax,
+        order=target_models
+    )
+    
+    # 3. Calculate and annotate Mean & Std inside boxes
+    for idx, m in enumerate(target_models):
+        scores = plot_df[plot_df["model"] == m]["score"]
+        mean_val = scores.mean()
+        std_val = scores.std()
+        
+        # Place text at the mean coordinate
+        ax.text(
+            idx, mean_val, 
+            f"{mean_val:.3f}\n±{std_val:.3f}", 
+            ha='center', va='center', 
+            color='black', fontsize=10, fontweight='bold',
+            bbox=dict(facecolor='white', alpha=0.75, edgecolor='none', boxstyle='round,pad=0.2')
+        )
+
+    plt.xticks(rotation=45, ha="right")
+    plt.title(f"Variation Comparison ('{suffix}'): {metric_name.capitalize()} | {dataset} | k={k}")
+    plt.ylabel(metric_name.capitalize())
+    plt.xlabel("Model")
+    plt.tight_layout()
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"Variation_{suffix}_{dataset}_k{k}_{metric_name}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
+        print(f"Saved plot to: {filepath}")
+    plt.show()
+
+def boxplot_all_variations(df, 
+                            metric_name: str, 
+                            dataset: str, 
+                            k: str|int=4,
+                            output_dir=None):
+   
+    plot_df = df[
+        (df["metric"] == metric_name) & 
+        (df["k"] == str(k))
+    ].copy()
+
+    plot_df["suffix"] = plot_df["model"].apply(variation_suffix)
+    variations = plot_df['suffix'].unique()
+
+    num_subplots = len(variations)
+    fig, axs = plt.subplots(2, ceiling_div(num_subplots,2),figsize=(16, 12))
+    axs = axs.flatten()
+    
+    for i, sfx in enumerate(variations):
+        ax=axs[i]
+        sfx_df = plot_df[plot_df["suffix"]==sfx]
+        model_order= sorted(sfx_df['model'].unique())
+
+        # 1. plot the boxes
+        sns.boxplot(
+            data=sfx_df,
+            x="model",
+            y="score",
+            hue="model",
+            legend=False,
+            ax=ax,
+            # Order explicitly ensures they always appear in this specific order on the X-axis
+            order=model_order, 
+            palette="Set1"
+        )
+        # 2. add data dots
+        sns.stripplot(
+            data=sfx_df,
+            x="model",
+            y="score",
+            color="black",
+            alpha=0.5,
+            jitter=True,
+            size=5,
+            ax=ax,
+            order=model_order
+        )
+        # 3. calculate and anotate Mean & Std inside boxes
+        for idx, m in enumerate(model_order):
+            scores = sfx_df[sfx_df['model']==m]['score']
+            mean_val = scores.mean()
+            std_val = scores.std()
+            ax.text(
+                idx, mean_val,
+                f"{mean_val:.3f}\n±{std_val:.3f}",
+                ha='center', va='center',
+                color='black', fontsize=9, fontweight='bold',
+                bbox=dict(facecolor='white', alpha=0.75, edgecolor='none',boxstyle='round,pad=0.2')
+            )
+        ax.set_title(f"{sfx} Variations", fontsize=16)
+        ax.set_xlabel("")
+        ax.set_ylabel(f"{metric_name.capitalize()}", fontsize=10)
+        ax.tick_params(axis='x', rotation=45)
+
+    # Remove any empty subplots (if num_subplots is odd)
+    for j in range(num_subplots, len(axs)):
+        fig.delaxes(axs[j])
+
+    fig.suptitle(f"Variation Comparison across Models: {metric_name.capitalize()} | {dataset} | k={k}",fontsize=20)
+    plt.tight_layout()
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True) 
+        filename = f"all_variations_{dataset}_k{k}_{metric_name}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, dpi=300, bbox_inches='tight') # dpi=300 for high quality
+        print(f"Saved plot to: {filepath}")
+    plt.show()
+
+# ========================== Plot Rule Importance ==========================================
+def plot_rule_importance(df, x_col:str, y_col:str):
+
+    # Choose the column for the X-axis (Importance)
+    x_col = x_col
+    # Choose the column for the Y-axis (Feature/Rule)
+    y_col = y_col
+    # Choose the column for the Color (mimicking high/low feature value)
+    color_col = x_col
+
+    # 1. Duplicate and add noise to simulate having multiple points per rule
+    df = pd.concat([df]*20, ignore_index=True)
+    df[x_col] += np.random.normal(0, 0.001, len(df))
+
+    # 2. Sort rules by their mean importance so the most important is at the top
+    order = df.groupby(y_col)[x_col].mean().sort_values(ascending=False).index
+    y_mapping = {rule: i for i, rule in enumerate(order)}
+    df['y_pos'] = df[y_col].map(y_mapping)
+
+    # 3. Create the plot
+    fig, ax = plt.subplots(figsize=(5, 4))
+    # Add a slight vertical jitter so points don't heavily overlap
+    jitter = np.random.normal(0, 0.05, size=len(df))
+
+    # Scatter plot using a colormap
+    sc = ax.scatter(
+        df[x_col], 
+        df['y_pos'] + jitter, 
+        c=df[color_col], 
+        cmap='coolwarm', # blue-pink-red
+        s=15, 
+        alpha=0.8,
+        edgecolors='none'
+    )
+
+    # 4. Formatting
+    # Set Y-axis labels to the rule names
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels(order, fontsize=8)
+    ax.invert_yaxis() # Puts the most important rule at the top
+
+    # Add the central vertical line at 0
+    ax.axvline(0, color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
+
+    # Style the axes
+    ax.set_xlabel(x_col, fontsize=12)
+    ax.xaxis.grid(True, linestyle='--', alpha=0.3)
+    sns.despine(left=True, bottom=False)
+    ax.tick_params(axis='y', length=0) # Remove y-axis tick marks for a cleaner look
+
+    # 6. Add and format the colorbar
+    cbar = plt.colorbar(sc, ax=ax, aspect=40, pad=0.05)
+    cbar.set_label('Feature Value', fontsize=10)
+    cbar.set_ticks([df[color_col].min(), df[color_col].max()])
+    cbar.set_ticklabels(['Low', 'High'])
+    cbar.ax.set_frame_on(False)
+
+    plt.tight_layout()
+    plt.show()
+
+# ========================== Calculate Rule Importance =====================================
+def parse_df_rules(result_path:str):
+
+    with open(result_path, 'rb') as f:
+        result = pickle.load(f)
+
+    rules_dfs = []
+    samples_dfs = []
+
+    for model_name, res in result.items():
+        if not isinstance(res, dict):
+            continue
+
+        res_rules = res.get("df_rules")
+        if isinstance(res_rules, list) and len(res_rules) != 0:
+            for fold_idx, rules in enumerate(res_rules):
+                if rules is None or not isinstance(rules, pd.DataFrame):
+                    continue
+                rules = rules.copy()
+                rules["fold"] = fold_idx + 1
+                rules["model"] = model_name
+                rules_dfs.append(rules)
+
+        res_samples = res.get("df_samples")
+        if isinstance(res_samples, list) and len(res_samples) != 0:
+            for fold_idx, samples in enumerate(res_samples):
+                if samples is None or not isinstance(samples, pd.DataFrame):
+                    continue
+                samples = samples.copy()
+                samples["fold"] = fold_idx + 1
+                samples["model"] = model_name
+                samples_dfs.append(samples)
+
+    df_rule = pd.concat(rules_dfs, axis=0)
+    df_sample = pd.concat(samples_dfs, axis=0)
+
+    return df_rule, df_sample
 
 def get_rule_params(model: nn.Module, 
                     data: Any, 
