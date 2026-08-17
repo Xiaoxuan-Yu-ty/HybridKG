@@ -46,7 +46,7 @@ def parse():
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
     parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/explain")
     parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
-    parser.add_argument('--model_type', type=str, default='RuleOnly', choices=['GAT', 'GCN', 'GIN','RuleOnly'])
+    parser.add_argument('--model_type', type=str, default='GAT', choices=['GAT', 'GCN', 'GIN','RuleOnly'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  
     # Model parameters
@@ -58,10 +58,10 @@ def parse():
     parser.add_argument("--negative_slop", type=float, default=0.2)
     
     # General Optimizer Settings
-    parser.add_argument("--num_trial", type=int, default=1, help="Number of trials for HPO process.")
+    parser.add_argument("--num_trial", type=int, default=100, help="Number of trials for HPO process.")
     parser.add_argument("--n_jobs", type=int, default=1, help="Number of jobs in Optuna HPO process.")
-    parser.add_argument("--n_splits", type=int, default=3, help="The number of splits in CV HPO")
-    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--n_splits", type=int, default=5, help="The number of splits in CV HPO")
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
 
