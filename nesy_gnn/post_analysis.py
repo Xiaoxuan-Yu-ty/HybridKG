@@ -1,4 +1,5 @@
 "Post Training Analysis functions, like plot, evaluate rules..."
+import json
 import os
 import pickle
 import pandas as pd
@@ -442,67 +443,7 @@ def boxplot_all_variations(df,
     plt.show()
 
 # ========================== Plot Rule Importance ==========================================
-def plot_rule_importance(df, x_col:str, y_col:str):
-
-    # Choose the column for the X-axis (Importance)
-    x_col = x_col
-    # Choose the column for the Y-axis (Feature/Rule)
-    y_col = y_col
-    # Choose the column for the Color (mimicking high/low feature value)
-    color_col = x_col
-
-    # 1. Duplicate and add noise to simulate having multiple points per rule
-    df = pd.concat([df]*20, ignore_index=True)
-    df[x_col] += np.random.normal(0, 0.001, len(df))
-
-    # 2. Sort rules by their mean importance so the most important is at the top
-    order = df.groupby(y_col)[x_col].mean().sort_values(ascending=False).index
-    y_mapping = {rule: i for i, rule in enumerate(order)}
-    df['y_pos'] = df[y_col].map(y_mapping)
-
-    # 3. Create the plot
-    fig, ax = plt.subplots(figsize=(5, 4))
-    # Add a slight vertical jitter so points don't heavily overlap
-    jitter = np.random.normal(0, 0.05, size=len(df))
-
-    # Scatter plot using a colormap
-    sc = ax.scatter(
-        df[x_col], 
-        df['y_pos'] + jitter, 
-        c=df[color_col], 
-        cmap='coolwarm', # blue-pink-red
-        s=15, 
-        alpha=0.8,
-        edgecolors='none'
-    )
-
-    # 4. Formatting
-    # Set Y-axis labels to the rule names
-    ax.set_yticks(range(len(order)))
-    ax.set_yticklabels(order, fontsize=8)
-    ax.invert_yaxis() # Puts the most important rule at the top
-
-    # Add the central vertical line at 0
-    ax.axvline(0, color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
-
-    # Style the axes
-    ax.set_xlabel(x_col, fontsize=12)
-    ax.xaxis.grid(True, linestyle='--', alpha=0.3)
-    sns.despine(left=True, bottom=False)
-    ax.tick_params(axis='y', length=0) # Remove y-axis tick marks for a cleaner look
-
-    # 6. Add and format the colorbar
-    cbar = plt.colorbar(sc, ax=ax, aspect=40, pad=0.05)
-    cbar.set_label('Feature Value', fontsize=10)
-    cbar.set_ticks([df[color_col].min(), df[color_col].max()])
-    cbar.set_ticklabels(['Low', 'High'])
-    cbar.ax.set_frame_on(False)
-
-    plt.tight_layout()
-    plt.show()
-
-# ========================== Calculate Rule Importance =====================================
-def parse_df_rules(result_path:str):
+def parse_df_rules(result_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     with open(result_path, 'rb') as f:
         result = pickle.load(f)
@@ -534,11 +475,316 @@ def parse_df_rules(result_path:str):
                 samples["model"] = model_name
                 samples_dfs.append(samples)
 
-    df_rule = pd.concat(rules_dfs, axis=0)
-    df_sample = pd.concat(samples_dfs, axis=0)
+    if rules_dfs:
+        df_rule = pd.concat(rules_dfs, axis=0, ignore_index=True)
+    else:
+        df_rule = pd.DataFrame()
+
+    if samples_dfs:
+        df_sample = pd.concat(samples_dfs, axis=0, ignore_index=True)
+    else:
+        df_sample = pd.DataFrame()
 
     return df_rule, df_sample
 
+def parse_all_rules(root_dir, output_dir=None):
+    rule_dfs, sample_dfs = [], []
+
+    for dirpath, _, filenames in os.walk(root_dir):
+        if "results.pkl" not in filenames:
+            continue
+
+        result_path = os.path.join(dirpath, "results.pkl")
+        rel = os.path.relpath(dirpath, root_dir)
+        parts = rel.split(os.sep)
+
+        if len(parts) < 3:
+            continue
+        dataset = parts[0]
+        k = parts[1]
+        model_type = parts[2]
+
+        df_rule, df_sample = parse_df_rules(result_path=result_path)
+        if df_rule.empty and df_sample.empty:
+            continue
+
+        if not df_rule.empty:
+            df_rule = df_rule.copy()
+            df_rule["dataset"] = dataset
+            df_rule["k"] = k
+            df_rule["backbone"] = model_type
+            rule_dfs.append(df_rule)
+
+        if not df_sample.empty:
+            df_sample = df_sample.copy()
+            df_sample["dataset"] = dataset
+            df_sample["k"] = k
+            df_sample["backbone"] = model_type
+            sample_dfs.append(df_sample)
+
+    df_rules = pd.concat(rule_dfs, axis=0, ignore_index=True) if rule_dfs else pd.DataFrame()
+    df_samples = pd.concat(sample_dfs, axis=0, ignore_index=True) if sample_dfs else pd.DataFrame()
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        df_rules.to_csv(os.path.join(output_dir, 'df_rules_importance.csv'))
+        df_samples.to_csv(os.path.join(output_dir,'df_samplewise_rule_IG_attributions.csv'))
+    return df_rules, df_samples
+
+def parse_rule_activations(result_path:str, meta_path)->pd.DataFrame:
+    # load result and meta
+    with open(result_path, 'rb') as f:
+        result = pickle.load(f)
+    with open(meta_path, 'rb') as f:
+        meta = json.load(f)
+    
+    patients = meta['patients']
+    rule_names = meta['rule_names']
+    direct_names = meta['direct_rule_names']
+    topo_names = ['degrees', 'clustering', 'eigenvector_centrality', 'degree_centrality', 'avg_edge_weight']
+    
+    # extract rule_activations for all samples of all folds in one backbone model 
+    rule_dfs = []
+    for model_type, res in result.items():
+        
+        res_rules = res.get('fuzzy_rules')
+        res_params = res.get('fuzzy_params')
+        if isinstance(res_rules, list) and len(res_rules) !=0:
+            for fold_idx, rules in enumerate(res_rules):
+                if rules is None: # or not isinstance(rules, torch.Tensor):
+                    continue
+                
+                # get rule activations 
+                num_rules = rules.size(1)
+                # print(rules.size())
+                df = pd.DataFrame(rules)
+                if num_rules == 5:
+                    df.columns = topo_names
+                elif num_rules == 185:
+                    df.columns = direct_names
+                elif num_rules == 190:
+                    df.columns = topo_names + direct_names
+                elif num_rules == 741:
+                    df.columns = rule_names
+                else:
+                    df.columns = topo_names + rule_names
+                df.insert(loc=0, column='sample_id', value=patients)
+                df.insert(loc=1, column='model', value=model_type)
+                df.insert(loc=2,column='fold',value=fold_idx+1)
+            
+                rule_dfs.append(df)
+
+    df_rule_activation = pd.concat(rule_dfs, axis=0)
+    return df_rule_activation
+
+# parse root folder to get all rule actiavtion for all backbone models
+def parse_all_rule_activations(root_dir:str, output_dir:Optional[str]=None):
+    activation_dfs = []
+    for dirpath, _, filenames in os.walk(root_dir):
+        
+        # root_dir/dataset/k/backbone/results.pkl
+        if 'results.pkl' not in filenames:
+            continue
+        result_path = os.path.join(dirpath,'results.pkl')
+
+        # Calculate meta_path by going exactly one directory up from 'backbone' to 'k'
+        parent_dir = os.path.dirname(dirpath)
+        meta_path = os.path.join(parent_dir, 'graph_meta.json')
+        
+        # Safety check to ensure the meta file actually exists before processing
+        if not os.path.exists(meta_path):
+            print(f"Warning: Missing graph_meta.json for {result_path}. Skipping.")
+            continue
+
+        rel=os.path.relpath(dirpath, root_dir)
+        parts = rel.split(os.sep)
+
+        if len(parts) < 3:
+            continue
+        dataset=parts[0]
+        k=parts[1]
+        backbone=parts[2]
+
+        df = parse_rule_activations(result_path, meta_path)
+        df.insert(loc=3, column='dataset', value=dataset)
+        df.insert(loc=4, column='k', value=k)
+        df.insert(loc=5,column='backbone',value=backbone)
+        activation_dfs.append(df)
+    
+    # Combine everything
+    if activation_dfs:
+        df_rule_activation = pd.concat(activation_dfs, axis=0, ignore_index=True)
+    else:
+        print("No valid result files found.")
+        return pd.DataFrame()
+        
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        df_rule_activation.to_csv(os.path.join(output_dir, 'df_samplewise_rule_activations.csv'))
+    
+    return df_rule_activation
+
+def plot_rule_importance(df: pd.DataFrame, x_col: str, y_col: str, 
+                         title: Optional[str] = None,
+                         cmap='coolwarm',
+                         central_vertical_line:float=0.0,
+                         interpolate: bool = True, 
+                         save_path: Optional[str] = None) -> pd.DataFrame:
+    """
+    Plots a SHAP-style summary scatter plot of rule importances.
+
+    Args:
+        df (pd.DataFrame): The dataframe containing the attribution values.
+        x_col (str): The column name representing the X-axis (Importance values).
+        y_col (str): The column name representing the Y-axis (e.g., 'rule_name').
+        title (Optional[str]): Custom title for the plot. Defaults to None.
+        cmap (Optional[str]): Color map for the plot. Default to coolwarm (light blue-while-red). 
+                            'bwr' (Blue-White-Red): Very similar to the official SHAP library's default. It has a sharper transition than coolwarm.
+                            'seismic': Similar to bwr, but the blues and reds at the extreme ends are much darker and more intense.
+                            'RdBu_r': (Red-Blue, reversed). This is a highly recommended, scientifically standard colormap that is slightly more muted and very easy on the eyes. (The _r at the end reverses it so Blue=Low and Red=High).
+                            'viridis': Dark purple (Low) transitioning through green to bright yellow (High).
+                            'plasma': Dark purple (Low) transitioning through bright pink to yellow (High).
+                            'magma': Black (Low) transitioning through pink to bright white/yellow (High).
+        interpolate (bool): If True, simulates more data points by duplicating 
+                            rows and adding Gaussian noise. Defaults to True.
+        save_path (Optional[str]): If provided, saves the figure to this file path.
+
+    Returns:
+        pd.DataFrame: A copy of the processed dataframe with calculated y-positions.
+    """
+    plot_df = df.copy()
+    color_col = x_col
+
+    if interpolate:
+        # 1. Duplicate and add noise to simulate having multiple points per rule
+        plot_df = pd.concat([plot_df] * 20, ignore_index=True)
+        plot_df[x_col] += np.random.normal(0, 0.001, len(plot_df))
+
+    # 2. Sort rules by their mean importance so the most important is at the top
+    # Double brackets [[x_col]] and by=x_col safely prevents DataFrame sorting errors
+    mean_importance = plot_df.groupby(y_col)[[x_col]].mean()
+    order = mean_importance.sort_values(by=x_col, ascending=False).index
+    
+    y_mapping = {rule: i for i, rule in enumerate(order)}
+    plot_df['y_pos'] = plot_df[y_col].map(y_mapping)
+    
+    # print top-5 importance rules names
+    top_rules = order[:5].tolist()
+    print(f"Top-5 {y_col} by {x_col}:\n{top_rules}")
+
+    # 3. Create the plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Add a slight vertical jitter so points don't heavily overlap
+    jitter = np.random.normal(0, 0.05, size=len(plot_df))
+
+    # Scatter plot using a colormap
+    sc = ax.scatter(
+        plot_df[x_col], 
+        plot_df['y_pos'] + jitter, 
+        c=plot_df[color_col], 
+        cmap=cmap, # blue-pink-red
+        s=15, 
+        alpha=0.8,
+        edgecolors='none'
+    )
+
+    # 4. Formatting
+    # Set Y-axis labels to the rule names
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels(order, fontsize=8)
+    ax.invert_yaxis() # Puts the most important rule at the top
+
+    # Add the central vertical line at 0
+    ax.axvline(central_vertical_line, color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
+
+    # Style the axes
+    ax.set_xlabel(x_col, fontsize=12)
+    if title:
+        ax.set_title(title, fontsize=14, pad=15)
+        
+    ax.xaxis.grid(True, linestyle='--', alpha=0.3)
+    sns.despine(left=True, bottom=False)
+    ax.tick_params(axis='y', length=0) # Remove y-axis tick marks for a cleaner look
+
+    # 5. Add and format the colorbar
+    cbar = plt.colorbar(sc, ax=ax, aspect=40, pad=0.05)
+    cbar.set_label('Feature Value', fontsize=10)
+    cbar.set_ticks([plot_df[color_col].min(), plot_df[color_col].max()])
+    cbar.set_ticklabels(['Low', 'High'])
+    cbar.ax.set_frame_on(False)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved plot to {save_path}")
+    plt.show()
+
+    return plot_df
+
+
+def per_sample_rule_attribution(df_samples: pd.DataFrame, dataset: str, k: str|int, 
+                                model_type: str, x_col: str, 
+                                title: Optional[str] = None,
+                                cmap='coolwarm',
+                                central_vertical_line:float=0.0,
+                                interpolate: bool = False, 
+                                save_path: Optional[str] = None):
+    """
+    Extracts and restructures sample-level rule attributions to visualize 
+    rule importance for a specific sample using standard pandas pivoting.
+
+    Args:
+        df_samples (pd.DataFrame): The raw dataframe containing per-sample rule attributions.
+        dataset (str): The name of the dataset to filter by.
+        k (str | int): The cross-validation fold 'k' to filter by.
+        model_type (str): The model type to filter by.
+        x_col (str): The column name representing the specific sample ID to plot.
+        title (Optional[str]): Custom title for the plot. Defaults to None.
+        interpolate (bool): If True, simulates more data points using noise. Defaults to False.
+        save_path (Optional[str]): If provided, saves the figure to this path.
+    """
+    non_rule_cols = ['gate', 'Label', 'Prediction', 'fold', 'model', 'dataset', 'k', 'backbone']
+    
+    # 1. Filter dataset
+    plot_df = df_samples[
+        (df_samples['dataset'] == dataset) &
+        (df_samples['k'] == str(k)) &
+        (df_samples['model'] == model_type)
+    ].copy()
+
+    # If 'sample_id' was previously set as an index, restore it to a column
+    if 'sample_id' not in plot_df.columns and plot_df.index.name == 'sample_id':
+        plot_df = plot_df.reset_index()
+
+    rule_cols = [col for col in plot_df.columns if col not in non_rule_cols]
+    plot_df = plot_df[rule_cols]
+
+    # 2. Optimized Reshaping (Replaces transposing and manual looping)
+    # Convert rules from wide format to long format
+    melted = plot_df.melt(id_vars='sample_id', var_name='rule_name', value_name='importance')
+    
+    # Tag duplicates (e.g. 0 for the first DCR00001_1, 1 for the second)
+    melted['occ'] = melted.groupby(['sample_id', 'rule_name']).cumcount()
+    
+    # Pivot so unique sample_ids become clean, non-duplicated columns 
+    new_df = melted.pivot(index=['rule_name', 'occ'], columns='sample_id', values='importance').reset_index()
+    
+    # Drop the temporary occurrence index and clean out NaNs
+    new_df = new_df.drop(columns=['occ']).dropna()
+
+    # 3. Plot the result
+    _ = plot_rule_importance(
+        new_df, 
+        x_col=x_col, 
+        y_col='rule_name', 
+        title=title,
+        cmap=cmap,
+        central_vertical_line=central_vertical_line,
+        interpolate=interpolate,
+        save_path=save_path
+    )
+
+# ========================== Calculate Rule Importance =====================================
 def get_rule_params(model: nn.Module, 
                     data: Any, 
                     rule_feature: torch.Tensor) -> Tuple[pd.DataFrame, Dict[str, torch.Tensor]]:
@@ -836,7 +1082,7 @@ def explain(model: nn.Module,
     df['Integrated_Gradient_importance(pred_label)'] = ig_pred_importance.numpy()
     
     df['rule_name'] = rule_names
-    df.set_index('rule_name', inplace=True)
+    # df.set_index('rule_name', inplace=True)
 
     # Assemble Sample-level Dataframe
     df_samples = pd.DataFrame(pred_attribution.numpy(), columns=rule_names)
@@ -845,6 +1091,7 @@ def explain(model: nn.Module,
     df_samples['sample_id'] = patients
     df_samples['Label'] = true_labels.cpu().numpy()
     df_samples['Prediction'] = pred_labels.cpu().numpy()
-    df_samples.set_index('sample_id', inplace=True)
+    # df_samples.set_index('sample_id', inplace=True)
 
     return df, df_samples
+

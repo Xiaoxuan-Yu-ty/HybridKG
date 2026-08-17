@@ -109,3 +109,5 @@ nesy_gnn/.nfs000000004ed0080a000001cc
 data_processing/__pycache__/
 GateEmbeddingTask/HRGNN/__pycache__/
 
+nesy_gnn/note.md
+Neo4j_KG_Containers/ADKG_neo4j/import

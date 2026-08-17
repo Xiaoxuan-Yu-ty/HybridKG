@@ -44,16 +44,16 @@ The`neo4j-admin import` tool is for ****bulk loading** massive datasets. It must
 1. **Stop the container:** `docker-compose down`
 2. **Run the import command:**
    **Bash**
-
    ```Shell
    docker run --rm \
      -v $PWD/data:/data \
      -v $PWD/import:/var/lib/neo4j/import \
-     neo4j:latest \
-     neo4j-admin database import full --nodes=import/nodes.csv --relationships=import/edges.csv
+     quay.io/lib/neo4j:community-bullseye \
+     neo4j-admin database import full neo4j \
+     --nodes=import/nodes.csv \
+     --relationships=import/edges.csv \
+     --overwrite-destination
    ```
-
-   *Note: Replace** **`full` with your specific database name (default is usually** **`neo4j`).*
 
 ### 4. Exporting to a`.cypher` File
 
