@@ -95,7 +95,8 @@ def main():
     # check point:
     graph_path = os.path.join(graph_output, 'patient_graph.gpickle')
     meta_path = os.path.join(graph_output, 'graph_meta.json')
-    if os.path.exists(path=graph_path) and os.path.exists(meta_path):
+    df_path = os.path.join(graph_output,'KGRules.csv')
+    if os.path.exists(path=graph_path) and os.path.exists(meta_path) and os.path.exists(df_path):
         with open(graph_path,'rb') as f:
             G = pickle.load(f)
         with open(meta_path, 'rb') as f:
@@ -111,14 +112,14 @@ def main():
             design_df = pd.read_csv(args.design, sep='\t', index_col=0)
             design_df['Target'] = design_df['Old_Target'].map({'Disease':'Disease','Control':'Control'})
 
-        G, meta = build_patient_graph(
+        G, meta, df_rules = build_patient_graph(
             kg_path=args.kg_path,
             exp_df=exp_df,
             design_df=design_df,
             k=args.k, 
             out_dir=graph_output, 
             metric= 'cosine',
-            z_norm=True, # use log2fc transformed expression scores as input features
+            z_norm=True, # use normalized expression scores as input features
             KGRule=False # not only use genes in KGRules
         )
     data_all      = build_pyg_data(G, use_direct_rules=False)
