@@ -111,14 +111,14 @@ def main():
             design_df = pd.read_csv(args.design, sep='\t', index_col=0)
             design_df['Target'] = design_df['Old_Target'].map({'Disease':'Disease','Control':'Control'})
 
-        G, meta = build_patient_graph(
+        G, meta, df_rules = build_patient_graph(
             kg_path=args.kg_path,
             exp_df=exp_df,
             design_df=design_df,
             k=args.k, 
             out_dir=graph_output, 
             metric= 'cosine',
-            z_norm=True, # use log2fc transformed expression scores as input features
+            z_norm=True, # use normalized expression scores as input features
             KGRule=False # not only use genes in KGRules
         )
     data_all      = build_pyg_data(G, use_direct_rules=False)

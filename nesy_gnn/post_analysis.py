@@ -784,6 +784,213 @@ def per_sample_rule_attribution(df_samples: pd.DataFrame, dataset: str, k: str|i
         save_path=save_path
     )
 
+def plot_gate(df_samples, subplots=True):
+    # Calculate the average 'gate' score for each model
+    avg_gate_per_model = df_samples.groupby('model')['gate'].mean().reset_index()
+
+    # Rename the column for clarity (optional)
+    avg_gate_per_model.rename(columns={'gate': 'average_gate'}, inplace=True)
+
+    # print(avg_gate_per_model)
+
+    # 1. Drop the rows with NaN (which removes FuzzyRuleOnly)
+    df_clean = avg_gate_per_model.dropna(subset=['average_gate']).copy()
+
+    # 2. Extract the 'backbone' and 'variant' from the model name
+    # Example: 'FuzzyGAT_all_rules' -> Backbone: 'GAT', Variant: 'all_rules'
+    df_clean['backbone'] = df_clean['model'].apply(lambda x: x.split('_')[0].replace('Fuzzy', ''))
+    df_clean['variant'] = df_clean['model'].apply(lambda x: '_'.join(x.split('_')[1:]))
+    variant_order = [
+        'topo', 
+        'direct_rules', 
+        'all_rules', 
+        'topo_direct_rules', 
+        'topo_all_rules'
+    ]
+
+    if not subplots:
+        plt.figure(figsize=(14, 7))
+
+        # Create a grouped bar chart
+        sns.barplot(
+            data=df_clean, 
+            x='variant', 
+            y='average_gate', 
+            hue='backbone', 
+            palette='viridis', # A nice color palette
+            order=variant_order,
+        )
+
+        # Formatting
+        plt.xlabel('Rule Variant', fontsize=12)
+        plt.ylabel('Average Gate Score', fontsize=12)
+        plt.xticks(rotation=45, ha='right')
+        plt.legend(title='Backbone Model', bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    else:
+        # subplots of Backbone models
+        # Create a figure with 3 subplots side-by-side
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True)
+
+        backbones = ['GAT', 'GCN', 'GIN']
+        colors = ['#4c72b0', '#dd8452', '#55a868'] # Distinct colors for each subplot
+
+        for i, backbone in enumerate(backbones):
+            # Filter data for the specific backbone
+            subset = df_clean[df_clean['backbone'] == backbone]
+            
+            # Plot
+            sns.barplot(data=subset, 
+                        x='variant', 
+                        y='average_gate', 
+                        ax=axes[i], 
+                        color=colors[i],
+                        order=variant_order)
+            
+            # Formatting
+            axes[i].set_title(f'{backbone} Backbone', fontsize=14)
+            axes[i].set_xlabel('FuzzyRule Variant')
+            axes[i].set_ylabel('Average Gate' if i == 0 else '') # Only label the first Y-axis
+            
+            # Rotate X-axis labels so they are readable
+            axes[i].tick_params(axis='x', rotation=45)
+            for tick in axes[i].get_xticklabels():
+                tick.set_ha('right')
+    plt.title("Average Gate Score by FuzzyRule Variant and Backbone Model", fontsize=16)
+    plt.tight_layout()
+    plt.show()
+    return 
+
+def plot_wrong_correct_mean_rulescore(df_samples, 
+                                        dataset, 
+                                        model_type, 
+                                        k,
+                                        rule_value_name:str='mean_attribution_score',
+                                        plot_correct=True,
+                                        cmap='magma',
+                                        save_path=None):
+
+    # calculate mean attribution for wrongly & correctly predicted groups samples
+    df_correct = df_samples[df_samples['Label']==df_samples['Prediction']]
+    df_wrong = df_samples[df_samples['Label']!=df_samples['Prediction']]
+
+    # Define the columns to group by
+    group_cols = ['dataset', 'k', 'model', 'fold']
+
+    # Identify the rule columns (everything from 'degrees' to the end)
+    start_idx = df_correct.columns.get_loc('degrees')
+    rule_cols = df_correct.columns[start_idx:].tolist()
+
+    # Calculate the mean for the correct predictions
+    df_correct_means = df_correct.groupby(group_cols)[rule_cols].mean().reset_index()
+    # Calculate the mean for the wrong predictions
+    df_wrong_means = df_wrong.groupby(group_cols)[rule_cols].mean().reset_index()
+
+    # Convert from wide to long format
+    if plot_correct:
+        df_long = df_correct_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name        # New column containing the values
+        )
+        title = f'Correctly Predicted Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+    else:
+        df_long = df_wrong_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name        # New column containing the values
+        )
+        title = f'Wrongly Predicted Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+
+    x_col=rule_value_name
+    y_col='rule_name'
+
+    plot_df = df_long[
+        (df_long['dataset']==dataset) &
+        (df_long['k']==str(k)) &
+        (df_long['model']==model_type)
+    ].copy()
+
+    plot_df = plot_df.dropna(axis=0)
+
+    df_plot = plot_rule_importance(df=plot_df,
+                            x_col=x_col,
+                            y_col=y_col,
+                            title=title,
+                            interpolate=False,
+                            cmap=cmap,
+                            save_path = save_path)
+    return df_plot
+
+def plot_disease_control_mean_rulescore(df_samples, 
+                                        dataset, 
+                                        model_type, 
+                                        k,
+                                        rule_value_name='mean_activation_score',
+                                        plot_disease=True,
+                                        cmap='magma',
+                                        save_path=None):
+
+    # calculate mean attribution for wrongly & correctly predicted groups samples
+    df = df_samples[df_samples['Label']==df_samples['Prediction']]
+    df1 = df[df['Prediction']==1]
+    df0 = df[df['Prediction']==0]
+
+    # Define the columns to group by
+    group_cols = ['dataset', 'k', 'model', 'fold']
+
+    # Identify the rule columns (everything from 'degrees' to the end)
+    start_idx = df.columns.get_loc('degrees')
+    rule_cols = df.columns[start_idx:].tolist()
+
+    # Calculate the mean for the disease group
+    df1_means = df1.groupby(group_cols)[rule_cols].mean().reset_index()
+    # Calculate the mean for the control group
+    df0_means = df0.groupby(group_cols)[rule_cols].mean().reset_index()
+
+    # Convert from wide to long format
+    if plot_disease:
+        df_long = df1_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name,        # New column containing the values
+        )
+        title = f'Correctly Predicted Disease Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+    else:
+        df_long = df0_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name,        # New column containing the values
+        )
+        title = f'Correctly Predicted Control Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+
+    x_col=rule_value_name
+    y_col='rule_name'
+
+    plot_df = df_long[
+        (df_long['dataset']==dataset) &
+        (df_long['k']==str(k)) &
+        (df_long['model']==model_type)
+    ].copy()
+
+    plot_df = plot_df.dropna(axis=0)
+
+    df_plot = plot_rule_importance(df=plot_df,
+                            x_col=x_col,
+                            y_col=y_col,
+                            title=title,
+                            interpolate=False,
+                            cmap=cmap,
+                            save_path = save_path)
+    return df_plot
+
+
+
+
 # ========================== Calculate Rule Importance =====================================
 def get_rule_params(model: nn.Module, 
                     data: Any, 
@@ -872,6 +1079,8 @@ def get_rule_params(model: nn.Module,
         "importance_class_0": importance_class_0.cpu().numpy(),
         "importance_class_1": importance_class_1.cpu().numpy(),
     })
+
+    result['grad_importance'] = (r_detached * grad_pred.detach()).abs()
 
     return rule_df, result
 
@@ -1035,7 +1244,7 @@ def explain(model: nn.Module,
             rule_feature: torch.Tensor, 
             rule_names: List[str], 
             patients: List[str], 
-            metric_name: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+            metric_name: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Comprehensive pipeline to aggregate various rule importance metrics 
     (Activation Gradients, Permutation, and Integrated Gradients) into formatted DataFrames.
@@ -1084,14 +1293,22 @@ def explain(model: nn.Module,
     df['rule_name'] = rule_names
     # df.set_index('rule_name', inplace=True)
 
-    # Assemble Sample-level Dataframe
-    df_samples = pd.DataFrame(pred_attribution.numpy(), columns=rule_names)
+    # Assemble Sample-level IntegratedGradient Attibution Dataframe
+    df_ig_attribution = pd.DataFrame(pred_attribution.numpy(), columns=rule_names)
+    df_ig_attribution.insert(loc=0,column='sample_id', value=patients)
+    df_ig_attribution.insert(loc=1, column='Label', value=true_labels.cpu().numpy())
+    df_ig_attribution.insert(loc=2, column='Prediction', value=pred_labels.cpu().numpy())
+
     if results['gate'] is not None:
-        df_samples['gate'] = results['gate'].abs().mean(dim=1).detach().cpu().numpy()
-    df_samples['sample_id'] = patients
-    df_samples['Label'] = true_labels.cpu().numpy()
-    df_samples['Prediction'] = pred_labels.cpu().numpy()
+        df_ig_attribution.insert(loc=4, column='gate', value=results['gate'].abs().mean(dim=1).detach().cpu().numpy())
     # df_samples.set_index('sample_id', inplace=True)
 
-    return df, df_samples
+    # Assembel Sample-wise Graident-based Importance Dataframe
+    grad_pred_importance = results['grad_importance']
+    df_grad_sample = pd.DataFrame(grad_pred_importance.cpu().numpy(), columns=rule_names)
+    df_grad_sample.insert(loc=0,column='sample_id', value=patients)
+    df_grad_sample.insert(loc=1, column='Label', value=true_labels.cpu().numpy())
+    df_grad_sample.insert(loc=2, column='Prediction', value=pred_labels.cpu().numpy())
+
+    return df, df_ig_attribution, df_grad_sample
 

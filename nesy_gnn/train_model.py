@@ -33,7 +33,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import StandardScaler
 
 from nesy_gnn.models import get_model
-from nesy_gnn.rule_engine import extract_rules
+from nesy_gnn.rule_engine import extract_rules, summarise_rules
 from nesy_gnn.post_analysis import explain
 
 
@@ -206,6 +206,7 @@ def get_patient_features(
         max_chain_length=4,
         bp_mechanisms_path=None
     )
+    df_rules = summarise_rules(rules)
     direct_rules = [r for r in rules if r.rule_type == 'direct_gene_ad']
 
     # 2. Prepare zscore_df to get features for building patient graph
@@ -239,7 +240,7 @@ def get_patient_features(
     kg_scores_direct = kg_scores_direct_df.values
     print(f' Direct-rule KG scores: {kg_scores_direct.shape}')
     
-    return features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df
+    return features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df, df_rules
 
 
 def build_patient_graph(
@@ -276,7 +277,7 @@ def build_patient_graph(
     ctl_ids = design_df[design_df['Target']==0].index.to_list()
     
     # Fixed unpacking to match the updated return signature
-    features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df = get_patient_features(
+    features, kg_scores, kg_scores_direct, kg_genes, kg_scores_df, kg_scores_direct_df, df_rules = get_patient_features(
         kg_path, 
         exp_df, 
         patients,
@@ -331,11 +332,12 @@ def build_patient_graph(
         'n_direct_rules': kg_scores_direct.shape[1],
     }
     meta_path = os.path.join(out_dir, 'graph_meta.json')
+    df_rules.to_csv(os.path.join(out_dir, 'KGRules.csv'))
     # Write to a JSON file with nice indentation
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta, f, indent=4)
     
-    return G,meta
+    return G,meta, df_rules
 
 def build_pyg_data(G, use_direct_rules=False):
     """Convert NetworkX patient graph to PyTorch Geometric Data."""
@@ -748,7 +750,7 @@ def run_cv(
     accs, f1s, aucs = [], [], []
     fold_rules, fold_fuzzy_params = [], []
     fold_metrics = []
-    fold_df_rules, fold_df_samples = [], []
+    fold_df_rules, fold_df_samples, fold_df_grad_samples = [], [], []
     
     # Ensure data is fully on the target device upfront
     d = data.to(device)
@@ -856,14 +858,15 @@ def run_cv(
             fold_fuzzy_params.append(fuzzy_params)
 
             # Explain 
-            df_rules, df_samples = explain(model=model,
+            df_rules, df_ig_attributions, df_grad_samples = explain(model=model,
                                             data=data,
                                             rule_feature=rule_features,
                                             rule_names=rule_names,
                                             patients=meta['patients'],
                                             metric_name=metric_name)
             fold_df_rules.append(df_rules)
-            fold_df_samples.append(df_samples)
+            fold_df_samples.append(df_ig_attributions)
+            fold_df_grad_samples.append(df_grad_samples)
         
     print(f'\n=== Cross-Validation Results ===')
     print(f'  Accuracy : {np.mean(accs):.3f} ± {np.std(accs):.3f}')
@@ -874,4 +877,5 @@ def run_cv(
             'fuzzy_rules':fold_rules, 
             'fuzzy_params':fold_fuzzy_params,
             'df_rules': fold_df_rules,
-            'df_samples': fold_df_samples}
+            'df_samples': fold_df_samples,
+            'df_grad_samples':fold_df_grad_samples}
