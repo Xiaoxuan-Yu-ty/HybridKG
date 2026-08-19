@@ -54,6 +54,19 @@ The`neo4j-admin import` tool is for ****bulk loading** massive datasets. It must
      --relationships=import/edges.csv \
      --overwrite-destination
    ```
+   with podman and latest image
+   ```Shell
+   podman run --rm \
+      --user="$(id -u):$(id -g)" \
+      --userns=keep-id \
+      -v $PWD/data:/data:Z \
+      -v $PWD/import:/var/lib/neo4j/import:Z \
+      docker.io/library/neo4j:latest \
+      neo4j-admin database import full neo4j \
+      --nodes=/var/lib/neo4j/import/nodes.csv \
+      --relationships=/var/lib/neo4j/import/edges.csv \
+      --overwrite-destination
+   ```
 
 ### 4. Exporting to a`.cypher` File
 

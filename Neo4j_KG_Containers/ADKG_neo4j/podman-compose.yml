@@ -1,0 +1,25 @@
+services:
+  neo4j:
+    # Use the official Docker Hub registry instead of Quay.io
+    # Note: If this specific tag fails, you may need a versioned tag like '4.4-community-bullseye' or '5-community-bullseye'
+    image: docker.io/library/neo4j:latest
+    container_name: adkg
+
+    # Add them right here, aligned with the other service properties
+    user: "6162:12021"
+    userns_mode: "keep-id"
+
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+
+    environment:
+      NEO4J_AUTH: neo4j/test1234
+      NEO4J_dbms_security_allow__csv__import__from__file__urls: "true"
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+
+    volumes:
+      # Added :Z to the end of volume mounts to resolve potential SELinux permission issues in Podman
+      - ./data:/data:Z
+      - ./import:/var/lib/neo4j/import:Z
