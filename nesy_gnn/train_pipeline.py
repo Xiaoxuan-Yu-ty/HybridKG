@@ -95,7 +95,8 @@ def main():
     # check point:
     graph_path = os.path.join(graph_output, 'patient_graph.gpickle')
     meta_path = os.path.join(graph_output, 'graph_meta.json')
-    if os.path.exists(path=graph_path) and os.path.exists(meta_path):
+    df_path = os.path.join(graph_output,'KGRules.csv')
+    if os.path.exists(path=graph_path) and os.path.exists(meta_path) and os.path.exists(df_path):
         with open(graph_path,'rb') as f:
             G = pickle.load(f)
         with open(meta_path, 'rb') as f:
