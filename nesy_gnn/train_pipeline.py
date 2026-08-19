@@ -45,7 +45,7 @@ def parse():
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
     parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/explain")
-    parser.add_argument('--dataset', type=str, default='ANMerge', choices=['ADNI', 'GEO', 'ANMerge'])
+    parser.add_argument('--dataset', type=str, default='ANMerge')
     parser.add_argument('--model_type', type=str, default='GAT', choices=['GAT', 'GCN', 'GIN','RuleOnly'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  

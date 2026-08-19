@@ -4,9 +4,9 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("ANMerge" "ADNI" "AdNeuralMed")
-K_VALUES=(8 12 16 20)
-MODELS=("GAT") # "GCN" "GIN" "RuleOnly")
+DATASETS=("AdNeuralMed") #"ANMerge" "ADNI" 
+K_VALUES=(4 8 12 16 20)
+MODELS=("GAT" "GCN" "GIN" "RuleOnly")
 
 # Base directory for outputs
 OUTPUT_DIR="./nesy_gnn/results/explain"
