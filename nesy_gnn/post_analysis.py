@@ -894,7 +894,7 @@ def plot_wrong_correct_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name        # New column containing the values
         )
-        title = f'Correctly Predicted Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+        title = f"Correctly Predicted Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
     else:
         df_long = df_wrong_means.melt(
             id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
@@ -902,7 +902,7 @@ def plot_wrong_correct_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name        # New column containing the values
         )
-        title = f'Wrongly Predicted Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+        title = f"Wrongly Predicted Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
 
     x_col=rule_value_name
     y_col='rule_name'
@@ -958,7 +958,7 @@ def plot_disease_control_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name,        # New column containing the values
         )
-        title = f'Correctly Predicted Disease Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+        title = f"Correctly Predicted Disease Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
     else:
         df_long = df0_means.melt(
             id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
@@ -966,7 +966,7 @@ def plot_disease_control_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name,        # New column containing the values
         )
-        title = f'Correctly Predicted Control Group {" ".join([i.capitalize() for i in rule_value_name.split('_')])}'
+        title = f"Correctly Predicted Control Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
 
     x_col=rule_value_name
     y_col='rule_name'

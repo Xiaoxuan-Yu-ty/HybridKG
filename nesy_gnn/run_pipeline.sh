@@ -4,7 +4,7 @@
 set -e
 
 # Define arrays for looping parameters
-DATASETS=("AdNeuralMed") #"ANMerge" "ADNI" 
+DATASETS=("AdNeuralMed" "ADNI" "GEO" "ANMerge")
 K_VALUES=(4 8 12 16 20)
 MODELS=("GAT" "GCN" "GIN" "RuleOnly")
 
@@ -36,7 +36,14 @@ for dataset in "${DATASETS[@]}"; do
 
     for k in "${K_VALUES[@]}"; do
         for model in "${MODELS[@]}"; do
-            
+
+            # check if target directory exist
+            TARGET_DIR="${OUTPUT_DIR}/${KG_NAME}/${dataset}/${k}/${model}"
+            if [ -d "$TARGET_DIR" ]; then
+                echo "Skippping Dataset=$dataset | k=$k | Model=$model (Directory already exists: $TARGET_DIR)"
+                continue
+            fi
+
             echo "========================================================"
             echo "Running Pipeline:"
             echo "  Dataset    : $dataset"

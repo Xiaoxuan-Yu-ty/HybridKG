@@ -36,16 +36,16 @@ def parse():
     parser.add_argument("--KG", type=str, default='AD_KG', choices=['AD_KG'])
     parser.add_argument("--kg_path", type=str, default="./data/KG/ad_network_with_reverse_edges.pkl", 
                         help="Path to Disease Knowledge Graph (.pkl).")
-    parser.add_argument("--exp_path", type=str, default='./data/ANMerge/ANMerge_TX_preprocessed/AnmergeTX_cleaned_exp.csv', 
+    parser.add_argument("--exp_path", type=str, default="./data/ADNI/cleaned_gene_expression_data.csv", 
                         help="Path to gene expression CSV (samples vs genes).")
-    parser.add_argument("--design", type=str, default="./data/ANMerge/design_2cls_3cl_target.csv", 
+    parser.add_argument("--design", type=str, default="./data/ADNI/design_with_real_target.tsv", 
                         help="Path to design CSV")
     parser.add_argument("--k", type=int, default=4,
                         help='K Neareast Neighbor used in generating patient graph')
     
     # for save path: {base_output}/{dataset}/{scoring}/{model}/
     parser.add_argument("--output_dir", type=str, default="./nesy_gnn/results/explain")
-    parser.add_argument('--dataset', type=str, default='ANMerge')
+    parser.add_argument('--dataset', type=str, default='ADNI')
     parser.add_argument('--model_type', type=str, default='GAT', choices=['GAT', 'GCN', 'GIN','RuleOnly'])
     parser.add_argument("--use_kg", action="store_true", help="Enable getting KGRuleGNN models")
  
