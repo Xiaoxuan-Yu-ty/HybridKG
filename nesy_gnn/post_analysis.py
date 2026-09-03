@@ -1,7 +1,9 @@
 "Post Training Analysis functions, like plot, evaluate rules..."
 import json
 import os
+from pathlib import Path
 import pickle
+from matplotlib.ticker import MultipleLocator
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -112,36 +114,87 @@ def boxplot_comparison(df, metric_name, dataset):
 # ------------------------------------------------------------------
 def ceiling_div(n,d):
     return (n+d-1)//d
+
+NPG_variant_colors = {
+    "base": "#E64B35",               # Red
+    "+topo": "#4DBBD5",              # Light Blue
+    "+direct_rules": "#00A087",      # Teal
+    "+all_rules": "#3C5488",         # Dark Blue
+    "+topo+direct_rules": "#F39B7F", # Peach
+    "+topo+all_rules": "#8491B4"     # Slate Grey
+}
+Tab10_variant_colors = {
+    "base": "#1f77b4",               # Muted Blue
+    "+topo": "#ff7f0e",              # Safety Orange
+    "+direct_rules": "#2ca02c",      # Cooked Asparagus Green
+    "+all_rules": "#d62728",         # Brick Red
+    "+topo+direct_rules": "#9467bd", # Muted Purple
+    "+topo+all_rules": "#8c564b"     # Chestnut Brown
+}
     
-# Four subplots (one for each base model type) in one figure
 def boxplot_all_backbones_subplots(df, 
                                    metric_name: str, 
                                    dataset: str, 
                                    k: str|int=4,
                                    output_dir=None):
+    
+    # define palette:Okabe-Ito
+    variant_colors = {
+        "base": "#E69F00",                # Orange (GNN / RuleOnly base)
+        "topo": "#56B4E9",               # Sky Blue
+        "direct_rules": "#009E73",       # Bluish Green
+        "all_rules": "#F0E442",          # Yellow
+        "topo_direct_rules": "#0072B2",  # Blue
+        "topo_all_rules": "#D55E00"      # Vermilion
+    }
+    
+    # identify variant type from model string
+    def get_variant_type(model_name):
+        if "topo_all_rules" in model_name: return "topo_all_rules"
+        if "topo_direct_rules" in model_name: return "topo_direct_rules"
+        if "all_rules" in model_name: return "all_rules"
+        if "direct_rules" in model_name: return "direct_rules"
+        if "topo" in model_name: return "topo"
+        return "base"
+    
+    # Sorting order to guarantee identical box order across subplots
+    variant_order = {
+        "base": 0,
+        "topo": 1,
+        "direct_rules": 2,
+        "all_rules": 3,
+        "topo_direct_rules": 4,
+        "topo_all_rules": 5
+    }
+
     # Filter and copy to avoid SettingWithCopyWarning
     plot_df = df[
         (df["metric"] == metric_name) & 
         (df["k"] == str(k)) &
-        (df['dataset']==dataset)
+        (df['dataset'] == dataset)
     ].copy()
     
-    plot_df["backbone"] = plot_df["model"].apply(backbone)
+    plot_df["backbone"] = plot_df["model"].apply(backbone) # Assuming `backbone` is defined elsewhere
+    
+    # Create the fixed palette dictionary for all unique models in this subset
+    model_palette = {m: variant_colors[get_variant_type(m)] for m in plot_df['model'].unique()}
     
     backbones = sorted(plot_df['backbone'].unique())
     num_subplots = len(backbones)
     
-    # Create grid based on number of backbones
+    # Create grid based on number of backbones (assuming ceiling_div is imported)
     fig, axes = plt.subplots(2, ceiling_div(num_subplots, 2), figsize=(16, 12))
     axes = axes.flatten()
-    subplot_colors = sns.color_palette("pastel", n_colors=num_subplots)
     
     for i, bb in enumerate(backbones):
         ax = axes[i]
         bb_df = plot_df[plot_df["backbone"] == bb]
         
-        # Explicit order to ensure boxplot, dots, and text all align
-        model_order = bb_df['model'].unique()
+        # sort model's variants order
+        model_order = sorted(
+            bb_df['model'].unique(), 
+            key=lambda x: variant_order[get_variant_type(x)]
+        )
         
         # 1. Plot the boxes
         sns.boxplot(
@@ -150,9 +203,9 @@ def boxplot_all_backbones_subplots(df,
             y="score",
             hue="model",
             ax=ax,
-            palette="Set2",
+            palette=model_palette, # Apply the fixed dictionary
             legend=False,
-            order=model_order
+            order=model_order      # Apply the fixed logical order
         )
         
         # 2. Add data dots
@@ -165,7 +218,7 @@ def boxplot_all_backbones_subplots(df,
             jitter=True,
             size=5,
             ax=ax,
-            order=model_order
+            order=model_order      # Keep dots aligned with boxes
         )
         
         # 3. Calculate and annotate Mean & Std inside boxes
@@ -186,7 +239,9 @@ def boxplot_all_backbones_subplots(df,
         ax.set_title(f"{bb} Variations", fontsize=16)
         ax.set_xlabel("")
         ax.set_ylabel(metric_name.capitalize(), fontsize=10)
-        ax.tick_params(axis='x', rotation=45)
+        
+        # Rotate x-labels and adjust alignment so they look clean
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
         
     # Remove any empty subplots (if num_subplots is odd)
     for j in range(num_subplots, len(axes)):
@@ -200,7 +255,7 @@ def boxplot_all_backbones_subplots(df,
         os.makedirs(output_dir, exist_ok=True) 
         filename = f"all_backbones_{dataset}_k{k}_{metric_name}.png"
         filepath = os.path.join(output_dir, filename)
-        plt.savefig(filepath, dpi=300, bbox_inches='tight') # dpi=300 for high quality
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
         print(f"Saved plot to: {filepath}")
         
     plt.show()
@@ -628,7 +683,9 @@ def plot_rule_importance(df: pd.DataFrame, x_col: str, y_col: str,
                          cmap='coolwarm',
                          central_vertical_line:float=0.0,
                          interpolate: bool = True, 
-                         save_path: Optional[str] = None) -> pd.DataFrame:
+                         save_path: Optional[str] = None,
+                         xlim: Optional[Tuple[float, float]] = None,
+                         x_interval: Optional[float] = None) -> pd.DataFrame:
     """
     Plots a SHAP-style summary scatter plot of rule importances.
 
@@ -663,6 +720,7 @@ def plot_rule_importance(df: pd.DataFrame, x_col: str, y_col: str,
     # Double brackets [[x_col]] and by=x_col safely prevents DataFrame sorting errors
     mean_importance = plot_df.groupby(y_col)[[x_col]].mean()
     order = mean_importance.sort_values(by=x_col, ascending=False).index
+    df_ordered_rule = mean_importance.sort_values(by=x_col, ascending=False)
     
     y_mapping = {rule: i for i, rule in enumerate(order)}
     plot_df['y_pos'] = plot_df[y_col].map(y_mapping)
@@ -696,7 +754,14 @@ def plot_rule_importance(df: pd.DataFrame, x_col: str, y_col: str,
 
     # Add the central vertical line at 0
     ax.axvline(central_vertical_line, color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
-
+    # Apply rigid x-axis limits and intervals
+    # ---------------------------------------------------------
+    if xlim is not None:
+        ax.set_xlim(xlim)
+        
+    if x_interval is not None:
+        ax.xaxis.set_major_locator(MultipleLocator(x_interval))
+    # ---------------------------------------------------------
     # Style the axes
     ax.set_xlabel(x_col, fontsize=12)
     if title:
@@ -719,7 +784,7 @@ def plot_rule_importance(df: pd.DataFrame, x_col: str, y_col: str,
         print(f"Saved plot to {save_path}")
     plt.show()
 
-    return plot_df
+    return df_ordered_rule
 
 
 def per_sample_rule_attribution(df_samples: pd.DataFrame, dataset: str, k: str|int, 
@@ -773,7 +838,7 @@ def per_sample_rule_attribution(df_samples: pd.DataFrame, dataset: str, k: str|i
     new_df = new_df.drop(columns=['occ']).dropna()
 
     # 3. Plot the result
-    _ = plot_rule_importance(
+    df_ordered_rules = plot_rule_importance(
         new_df, 
         x_col=x_col, 
         y_col='rule_name', 
@@ -783,6 +848,7 @@ def per_sample_rule_attribution(df_samples: pd.DataFrame, dataset: str, k: str|i
         interpolate=interpolate,
         save_path=save_path
     )
+    return df_ordered_rules
 
 def plot_gate(df_samples, subplots=True):
     # Calculate the average 'gate' score for each model
@@ -868,7 +934,9 @@ def plot_wrong_correct_mean_rulescore(df_samples,
                                         rule_value_name:str='mean_attribution_score',
                                         plot_correct=True,
                                         cmap='magma',
-                                        save_path=None):
+                                        save_dir=None,
+                                        xlim=None,
+                                        x_interval=None):
 
     # calculate mean attribution for wrongly & correctly predicted groups samples
     df_correct = df_samples[df_samples['Label']==df_samples['Prediction']]
@@ -894,7 +962,7 @@ def plot_wrong_correct_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name        # New column containing the values
         )
-        title = f"Correctly Predicted Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
+        title = f'True Prediction'
     else:
         df_long = df_wrong_means.melt(
             id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
@@ -902,18 +970,29 @@ def plot_wrong_correct_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name        # New column containing the values
         )
-        title = f"Wrongly Predicted Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
+        title = f'False Prediction'
 
     x_col=rule_value_name
     y_col='rule_name'
 
     plot_df = df_long[
         (df_long['dataset']==dataset) &
-        (df_long['k']==str(k)) &
+        (df_long['k']==k) &
         (df_long['model']==model_type)
     ].copy()
 
     plot_df = plot_df.dropna(axis=0)
+
+    mean_importance = plot_df.groupby(y_col)[[x_col]].mean()
+    df_rule_order = mean_importance.sort_values(by=x_col, ascending=False)
+    
+    # save rule order and plot
+    save_path = None
+    if save_dir is not None:
+        save_path = os.path.join(save_dir, f"{dataset}_{model_type}_{x_col}_{title}.png")
+        save_rule = os.path.join(save_dir, f"Ordered_rules_{dataset}_{model_type}_{x_col}_{title}.csv")
+        df_rule_order.to_csv(save_rule)
+    
 
     df_plot = plot_rule_importance(df=plot_df,
                             x_col=x_col,
@@ -921,20 +1000,33 @@ def plot_wrong_correct_mean_rulescore(df_samples,
                             title=title,
                             interpolate=False,
                             cmap=cmap,
-                            save_path = save_path)
-    return df_plot
+                            save_path = save_path,
+                            xlim=xlim,
+                            x_interval=x_interval)
+    return df_rule_order
 
-def plot_disease_control_mean_rulescore(df_samples, 
-                                        dataset, 
-                                        model_type, 
-                                        k,
-                                        rule_value_name='mean_activation_score',
-                                        plot_disease=True,
-                                        cmap='magma',
-                                        save_path=None):
-
+def plot_tp_fn_rule_score(df_samples, 
+                              df_rules, 
+                              dataset, 
+                              k, 
+                              model_type, 
+                              rule_value_name, 
+                              cmap="viridis",
+                              plot_correct=True, 
+                              plot_disease=True,
+                              save_dir=None,
+                              xlim=None,
+                              x_interval=None,
+                              ):
     # calculate mean attribution for wrongly & correctly predicted groups samples
-    df = df_samples[df_samples['Label']==df_samples['Prediction']]
+    if plot_correct:
+        df = df_samples[df_samples['Label']==df_samples['Prediction']]
+        tf = 'True'
+    else:
+        df = df_samples[df_samples['Label']!=df_samples['Prediction']]
+        tf = "False"
+
+
     df1 = df[df['Prediction']==1]
     df0 = df[df['Prediction']==0]
 
@@ -958,7 +1050,8 @@ def plot_disease_control_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name,        # New column containing the values
         )
-        title = f"Correctly Predicted Disease Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
+        tf += " Positive"
+        title = f"{tf} Prediction"
     else:
         df_long = df0_means.melt(
             id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
@@ -966,29 +1059,79 @@ def plot_disease_control_mean_rulescore(df_samples,
             var_name='rule_name',                      # New column containing the rule names
             value_name=rule_value_name,        # New column containing the values
         )
-        title = f"Correctly Predicted Control Group {' '.join([i.capitalize() for i in rule_value_name.split('_')])}"
-
-    x_col=rule_value_name
-    y_col='rule_name'
+        tf += " Negative"
+        title=f"{tf} Prediction"
 
     plot_df = df_long[
         (df_long['dataset']==dataset) &
-        (df_long['k']==str(k)) &
+        (df_long['k']==k) &
         (df_long['model']==model_type)
     ].copy()
 
     plot_df = plot_df.dropna(axis=0)
+    x_col=rule_value_name
+    y_col='rule_name'
 
-    df_plot = plot_rule_importance(df=plot_df,
+    # Sort rules by their mean importance so the most important is at the top
+    # Double brackets [[x_col]] and by=x_col safely prevents DataFrame sorting errors
+    mean_importance = plot_df.groupby(y_col)[[x_col]].mean()
+    order = mean_importance.sort_values(by=x_col, ascending=False).index
+    df_ordered_rule = mean_importance.sort_values(by=x_col, ascending=False)
+
+    df_rules = df_rules.rename(columns={'name':'rule_name'})
+
+    df_ordered_rule = df_ordered_rule.reset_index()
+    df_correct_disease = df_ordered_rule.merge(df_rules, on='rule_name', how='left')
+
+    # save rule order and plot
+    save_path = None
+    save_rule = None
+    if save_dir is not None:
+        save_path = os.path.join(save_dir, f"{dataset}_{model_type}_{x_col}_{title}.png")
+        save_rule = os.path.join(save_dir, f"Ordered_rules_{dataset}_{model_type}_{x_col}_{title}.csv")
+        
+
+    df_orded_rules = plot_rule_importance(df=plot_df,
                             x_col=x_col,
                             y_col=y_col,
                             title=title,
                             interpolate=False,
                             cmap=cmap,
-                            save_path = save_path)
-    return df_plot
+                            save_path = save_path,
+                            xlim=xlim,
+                            x_interval=x_interval)
 
+    df_correct_disease.to_csv(save_rule)
 
+    return df_correct_disease
+
+def append_ordered_rule_info(KGRule_path:str, order_rule_dir:str):
+    # 1.read KGRules.csv
+    df1 = pd.read_csv(KGRule_path, index_col=0)
+    df1 = df1.rename(columns={'name':'rule_name'})
+
+    # 2. Define the folder containing your saved CSVs
+    folder_path = Path(order_rule_dir)
+
+    # 3. iterate over all "Ordered_rules_*.csv"
+    i = 0
+    for file_path in folder_path.glob("Ordered_rules_*.csv"):
+        i += 1
+        
+        df2 = pd.read_csv(file_path)
+        if 'rule_name' not in df2.columns and df2.index.name=='rule_name':
+            df2 = df2.reset_index()
+    
+        df2_clean = df2[['rule_name', 'mean_attribution']].copy()
+
+        # left merge to keep df2's order and add df1's information
+        merged_df = df2_clean.merge(df1, on='rule_name', how='left')
+        
+        # save the updated dataframe back to the exact same path
+        merged_df.to_csv(file_path, index=False)
+
+    print(f"All {i} files processed!")
+    return 
 
 
 # ========================== Calculate Rule Importance =====================================
@@ -1312,3 +1455,71 @@ def explain(model: nn.Module,
 
     return df, df_ig_attribution, df_grad_sample
 
+
+def get_correct_disease_rules(df_samples, 
+                              df_rules, 
+                              dataset, 
+                              k, 
+                              model_type, 
+                              rule_value_name, 
+                              plot_correct=True, 
+                              plot_disease=True):
+    # calculate mean attribution for wrongly & correctly predicted groups samples
+    if plot_correct:
+        df = df_samples[df_samples['Label']==df_samples['Prediction']]
+    else:
+        df = df_samples[df_samples['Label']!=df_samples['Prediction']]
+
+
+    df1 = df[df['Prediction']==1]
+    df0 = df[df['Prediction']==0]
+
+    # Define the columns to group by
+    group_cols = ['dataset', 'k', 'model', 'fold']
+
+    # Identify the rule columns (everything from 'degrees' to the end)
+    start_idx = df.columns.get_loc('degrees')
+    rule_cols = df.columns[start_idx:].tolist()
+
+    # Calculate the mean for the disease group
+    df1_means = df1.groupby(group_cols)[rule_cols].mean().reset_index()
+    # Calculate the mean for the control group
+    df0_means = df0.groupby(group_cols)[rule_cols].mean().reset_index()
+
+    # Convert from wide to long format
+    if plot_disease:
+        df_long = df1_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name,        # New column containing the values
+        )
+    else:
+        df_long = df0_means.melt(
+            id_vars=['dataset', 'k', 'model', 'fold'], # Columns to keep as identifiers
+            value_vars=rule_cols,                      # The rule columns to unpivot
+            var_name='rule_name',                      # New column containing the rule names
+            value_name=rule_value_name,        # New column containing the values
+        )
+
+    plot_df = df_long[
+        (df_long['dataset']==dataset) &
+        (df_long['k']==k) &
+        (df_long['model']==model_type)
+    ].copy()
+
+    plot_df = plot_df.dropna(axis=0)
+    x_col=rule_value_name
+    y_col='rule_name'
+
+    # Sort rules by their mean importance so the most important is at the top
+    # Double brackets [[x_col]] and by=x_col safely prevents DataFrame sorting errors
+    mean_importance = plot_df.groupby(y_col)[[x_col]].mean()
+    order = mean_importance.sort_values(by=x_col, ascending=False).index
+    df_ordered_rule = mean_importance.sort_values(by=x_col, ascending=False)
+
+    df_rules = df_rules.rename(columns={'name':'rule_name'})
+
+    df_ordered_rule = df_ordered_rule.reset_index()
+    df_correct_disease = df_ordered_rule.merge(df_rules, on='rule_name', how='left')
+    return df_correct_disease
