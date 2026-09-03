@@ -111,3 +111,6 @@ GateEmbeddingTask/HRGNN/__pycache__/
 
 nesy_gnn/note.md
 Neo4j_KG_Containers/ADKG_neo4j/import
+globalRuleImportance_IG.png
+Neo4j_KG_Containers/ADKG_neo4j/docker-compose.yml
+nesy_gnn/result_interpretation.md

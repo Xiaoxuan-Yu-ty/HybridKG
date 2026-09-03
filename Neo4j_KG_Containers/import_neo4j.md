@@ -44,6 +44,7 @@ The`neo4j-admin import` tool is for ****bulk loading** massive datasets. It must
 1. **Stop the container:** `docker-compose down`
 2. **Run the import command:**
    **Bash**
+
    ```Shell
    docker run --rm \
      -v $PWD/data:/data \
@@ -54,6 +55,7 @@ The`neo4j-admin import` tool is for ****bulk loading** massive datasets. It must
      --relationships=import/edges.csv \
      --overwrite-destination
    ```
+
    with podman and latest image
    ```Shell
    podman run --rm \
@@ -68,7 +70,26 @@ The`neo4j-admin import` tool is for ****bulk loading** massive datasets. It must
       --overwrite-destination
    ```
 
-### 4. Exporting to a`.cypher` File
+### 4. Exporting neo4j-admin database to a .dump file
+
+To use neo4j-bloom for high resolution image export, Neo4j Desktop is needed if having no Enterpreise Subscribed liscense. And the easies way to load KG database to Neo4j Desktop is via .dump file.
+
+1. **Stop the container:** `docker-compose stop`
+2. **Run the dump command:**
+   **Bash**
+
+   ```Shell
+   docker compose run --rm neo4j neo4j-admin database dump neo4j --to-path=/var/lib/neo4j/import
+   ```
+
+   with podman and latest image
+
+   ```Shell
+   podman compose run --rm neo4j neo4j-admin database dump neo4j --to-path=/var/lib/neo4j/import
+   ```
+3. Now the neo4j.dump file is stored under ./import folder, which can be loaded in Neo4j Desktop database.
+
+### 5. Exporting to a`.cypher` File
 
 Once your database is running and APOC is installed, use the APOC procedure in the Neo4j Browser or`cypher-shell`.
 
