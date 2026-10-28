@@ -15,7 +15,7 @@ import torch.nn.functional as F
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score
 from captum.attr import IntegratedGradients
-from typing import Dict, Optional, Tuple, Any, List
+from typing import Dict, Optional, Tuple, Any, List, Union
 
 # ===================== Plot Metrics ==========================================
 def parse_cv_metrics(root_dir):
@@ -914,15 +914,15 @@ def plot_gate(df_samples, subplots=True):
                         order=variant_order)
             
             # Formatting
-            axes[i].set_title(f'{backbone} Backbone', fontsize=14)
-            axes[i].set_xlabel('FuzzyRule Variant')
+            # axes[i].set_title(f'{backbone} Backbone', fontsize=14)
+            axes[i].set_xlabel(f'{backbone} Backbone', fontsize=14)
             axes[i].set_ylabel('Average Gate' if i == 0 else '') # Only label the first Y-axis
             
             # Rotate X-axis labels so they are readable
             axes[i].tick_params(axis='x', rotation=45)
             for tick in axes[i].get_xticklabels():
                 tick.set_ha('right')
-    plt.title("Average Gate Score by FuzzyRule Variant and Backbone Model", fontsize=16)
+    plt.title("Average Gate Score", fontsize=20)
     plt.tight_layout()
     plt.show()
     return 
@@ -933,6 +933,7 @@ def plot_wrong_correct_mean_rulescore(df_samples,
                                         k,
                                         rule_value_name:str='mean_attribution_score',
                                         plot_correct=True,
+                                        central_vertical_line:float=0.0,
                                         cmap='magma',
                                         save_dir=None,
                                         xlim=None,
@@ -999,6 +1000,7 @@ def plot_wrong_correct_mean_rulescore(df_samples,
                             y_col=y_col,
                             title=title,
                             interpolate=False,
+                            central_vertical_line=central_vertical_line,
                             cmap=cmap,
                             save_path = save_path,
                             xlim=xlim,
@@ -1011,6 +1013,7 @@ def plot_tp_fn_rule_score(df_samples,
                               k, 
                               model_type, 
                               rule_value_name, 
+                              central_vertical_line:float=0.0,
                               cmap="viridis",
                               plot_correct=True, 
                               plot_disease=True,
@@ -1096,6 +1099,7 @@ def plot_tp_fn_rule_score(df_samples,
                             y_col=y_col,
                             title=title,
                             interpolate=False,
+                            central_vertical_line=central_vertical_line,
                             cmap=cmap,
                             save_path = save_path,
                             xlim=xlim,
